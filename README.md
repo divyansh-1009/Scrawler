@@ -1,53 +1,99 @@
 # Agentic AI Web Crawler
 
-An intelligent web crawler that uses AI (Ollama's deepseek-r1:14b model) to make smart navigation decisions while crawling websites. Built with `crawl4ai` for efficient web scraping and `ollama` for AI-powered decision making.
+An intelligent, AI-powered web crawler that uses **deepseek-r1:14b** through Ollama to make smart navigation decisions while systematically crawling websites. The crawler extracts structured data, generates human-readable analysis reports, and preserves every detail in natural language format.
 
-## Features
+---
 
-- 🤖 **AI-Powered Navigation**: Uses Ollama's deepseek-r1:14b model to intelligently decide which links to crawl
-- 🌐 **Schema-less Crawling**: No predefined structure needed - the AI adapts to any website
-- 📊 **JSON Export**: All scraped content is saved in structured JSON format
-- 📝 **Complete Data Conversion**: Automatically converts all scraped data to human-readable markdown format
+## 🌟 Features
+
+### Core Capabilities
+- 🤖 **AI-Powered Navigation**: Uses deepseek-r1:14b model to intelligently select which links to crawl
+- � **Structured Data Extraction**: Automatically identifies and extracts products, prices, ratings, categories
+- 📊 **Smart Link Filtering**: Excludes images, CSS, JS, and other non-content files
 - 🔄 **Async Architecture**: Fast, efficient crawling using async/await patterns
-- 🎯 **Smart Link Selection**: AI filters out irrelevant links (login, cart, social media, etc.)
-- 📈 **Progress Tracking**: Real-time updates on crawling progress
-- 🎁 **Structured Data Extraction**: Automatically extracts products, prices, ratings, and categories
+- 📝 **Natural Language Reports**: Converts all scraped data to flowing paragraphs
+- � **Complete Data Preservation**: Every detail saved in both JSON and human-readable formats
 
-## Prerequisites
+### Data Extraction
+- **E-commerce Products**: Title, price, rating, availability, images
+- **Categories & Navigation**: Complete site taxonomy and structure
+- **Content**: Full HTML and Markdown content preservation
+- **Metadata**: Timestamps, URLs, page titles, descriptions
+- **Links**: All hyperlinks with domain filtering
 
-Before running this crawler, ensure you have:
+### Output Formats
+1. **JSON** (`scraped_data.json`): Complete structured data
+2. **Markdown** (`scraped_data_analysis.md`): Natural language narrative report with:
+   - Executive summary
+   - Page-by-page detailed analysis
+   - Product descriptions in flowing paragraphs
+   - Statistical analysis
+   - Complete raw JSON backup
 
-1. **Python 3.8+** installed
-2. **Ollama** installed and running with the deepseek-r1:14b model
+---
 
-### Installing Ollama
+## 📋 Prerequisites
+
+### System Requirements
+- **RAM**: Minimum 9GB (deepseek-r1:14b requires ~8.7GB)
+- **Python**: 3.8 or higher
+- **OS**: Windows, macOS, or Linux
+
+### Required Software
+1. **Python 3.8+**
+2. **Ollama** with deepseek-r1:14b model
+
+---
+
+## 🚀 Installation
+
+### Step 1: Install Ollama and Model
 
 1. Download and install Ollama from [ollama.ai](https://ollama.ai/)
+
 2. Pull the deepseek-r1:14b model:
    ```bash
    ollama pull deepseek-r1:14b
    ```
-3. Verify the model is available:
+
+3. Verify installation:
    ```bash
    ollama list
    ```
+   You should see `deepseek-r1:14b` in the list.
 
-## Installation
+### Step 2: Set Up Python Environment
 
-1. **Clone or navigate to this directory**
+1. **Clone or navigate to the project directory**
 
-2. **Create and activate a virtual environment** (recommended):
+2. **Create virtual environment**:
    ```powershell
+   # Windows PowerShell
    python -m venv venv
    .\venv\Scripts\Activate.ps1
    ```
+   
+   ```bash
+   # Linux/Mac
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
 
 3. **Install dependencies**:
-   ```powershell
+   ```bash
    pip install -r requirements.txt
    ```
 
-## Usage
+### Step 3: Verify Installation
+
+Run the setup check:
+```bash
+python -c "import main; print('✓ Installation successful!')"
+```
+
+---
+
+## 💻 Usage
 
 ### Basic Usage
 

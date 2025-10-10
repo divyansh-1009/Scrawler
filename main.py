@@ -170,16 +170,40 @@ class AgenticWebCrawler:
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
     
     async def _extract_links(self, html: str, base_url: str) -> List[str]:
-        """Extract all links from HTML content."""
+        """Extract all links from HTML content, filtering out static assets."""
         import re
+        
+        # Patterns to exclude (static assets, non-content files)
+        exclude_patterns = [
+            r'\.(jpg|jpeg|png|gif|svg|ico|webp|bmp)$',  # Images
+            r'\.(css|js|woff|woff2|ttf|eot)$',          # Stylesheets, fonts, scripts
+            r'\.(pdf|zip|tar|gz|rar|exe|dmg)$',         # Documents, archives
+            r'\.(mp4|mp3|avi|mov|wav|flac)$',           # Media files
+            r'(login|signin|signup|register|logout)',   # Auth pages
+            r'(cart|checkout|wishlist|account)',        # E-commerce
+            r'(facebook\.com|twitter\.com|instagram\.com|linkedin\.com|youtube\.com)',  # Social media
+            r'(mailto:|tel:|javascript:)',              # Special protocols
+        ]
+        
+        # Compile patterns
+        exclude_regex = re.compile('|'.join(exclude_patterns), re.IGNORECASE)
+        
         # Simple regex to find href attributes
         links = re.findall(r'href=["\']([^"\']+)["\']', html)
         normalized_links = []
         
         for link in links:
             try:
+                # Skip if matches exclude pattern
+                if exclude_regex.search(link):
+                    continue
+                
                 full_url = self._normalize_url(link, base_url)
-                if self._is_same_domain(full_url) and full_url not in self.visited_urls:
+                
+                # Additional checks
+                if (self._is_same_domain(full_url) and 
+                    full_url not in self.visited_urls and
+                    not exclude_regex.search(full_url)):
                     normalized_links.append(full_url)
             except Exception:
                 continue
@@ -231,6 +255,7 @@ If no links are relevant, respond with "NONE".
             answer = response['response'].strip()
             
             if answer.upper() == "NONE":
+                print("  → AI recommended no links to crawl")
                 return []
             
             # Extract numbers from response
@@ -246,9 +271,9 @@ If no links are relevant, respond with "NONE".
             return selected_links
             
         except Exception as e:
-            print(f"Error calling Ollama: {e}")
-            # Fallback: return first 3 links
-            return links_to_analyze[:3]
+            print(f"  → AI Error: {str(e)[:100]}")
+            print(f"  → Skipping link selection for this page")
+            return []
     
     async def _crawl_page(self, url: str, crawler: AsyncWebCrawler) -> Optional[Dict[str, Any]]:
         """
@@ -623,6 +648,14 @@ async def main():
     print("AGENTIC WEB CRAWLER WITH AI NAVIGATION")
     print("=" * 80)
     print()
+    
+    # Check if deepseek model is appropriate
+    print("NOTE: This crawler uses deepseek-r1:14b which requires ~8.7GB RAM")
+    print("If you experience memory errors, consider using a smaller model like:")
+    print("  - qwen2.5:3b (requires ~2GB RAM)")
+    print("  - llama3.2:3b (requires ~2GB RAM)")
+    print("  - mistral:7b (requires ~4GB RAM)")
+    print("Edit config.py to change the model.\n")
     
     # Get user input
     start_url = input("Enter the website URL to crawl: ").strip()
