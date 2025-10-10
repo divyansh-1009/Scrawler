@@ -3,8 +3,8 @@ Configuration settings for the Agentic Web Crawler
 """
 
 # Ollama Settings
-OLLAMA_MODEL = "tinyllama:latest"
-OLLAMA_TIMEOUT = 30  # seconds
+OLLAMA_MODEL = "deepseek-r1:14b"
+OLLAMA_TIMEOUT = 60  # seconds (increased for larger model)
 
 # Crawler Settings
 DEFAULT_MAX_PAGES = 50

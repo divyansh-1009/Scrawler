@@ -1,30 +1,31 @@
 # Agentic AI Web Crawler
 
-An intelligent web crawler that uses AI (Ollama's tinyllama model) to make smart navigation decisions while crawling websites. Built with `crawl4ai` for efficient web scraping and `ollama` for AI-powered decision making.
+An intelligent web crawler that uses AI (Ollama's deepseek-r1:14b model) to make smart navigation decisions while crawling websites. Built with `crawl4ai` for efficient web scraping and `ollama` for AI-powered decision making.
 
 ## Features
 
-- 🤖 **AI-Powered Navigation**: Uses Ollama's tinyllama model to intelligently decide which links to crawl
+- 🤖 **AI-Powered Navigation**: Uses Ollama's deepseek-r1:14b model to intelligently decide which links to crawl
 - 🌐 **Schema-less Crawling**: No predefined structure needed - the AI adapts to any website
 - 📊 **JSON Export**: All scraped content is saved in structured JSON format
-- 📝 **AI Content Analysis**: Automatically generates human-readable reports from scraped data
+- 📝 **Complete Data Conversion**: Automatically converts all scraped data to human-readable markdown format
 - 🔄 **Async Architecture**: Fast, efficient crawling using async/await patterns
 - 🎯 **Smart Link Selection**: AI filters out irrelevant links (login, cart, social media, etc.)
 - 📈 **Progress Tracking**: Real-time updates on crawling progress
+- 🎁 **Structured Data Extraction**: Automatically extracts products, prices, ratings, and categories
 
 ## Prerequisites
 
 Before running this crawler, ensure you have:
 
 1. **Python 3.8+** installed
-2. **Ollama** installed and running with the tinyllama model
+2. **Ollama** installed and running with the deepseek-r1:14b model
 
 ### Installing Ollama
 
 1. Download and install Ollama from [ollama.ai](https://ollama.ai/)
-2. Pull the tinyllama model:
+2. Pull the deepseek-r1:14b model:
    ```bash
-   ollama pull tinyllama:latest
+   ollama pull deepseek-r1:14b
    ```
 3. Verify the model is available:
    ```bash

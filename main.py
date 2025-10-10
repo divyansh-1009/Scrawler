@@ -1,6 +1,6 @@
 """
 Agentic AI Web Crawler using Crawl4AI and Ollama
-This script crawls websites intelligently using the tinyllama model for navigation decisions.
+This script crawls websites intelligently using the deepseek-r1:14b model for navigation decisions.
 """
 
 import asyncio
@@ -12,6 +12,8 @@ from urllib.parse import urljoin, urlparse
 import ollama
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.extraction_strategy import NoExtractionStrategy
+from bs4 import BeautifulSoup
+from convert_to_markdown import json_to_markdown_complete
 
 
 class AgenticWebCrawler:
@@ -19,7 +21,7 @@ class AgenticWebCrawler:
     An intelligent web crawler that uses AI to make navigation decisions.
     """
     
-    def __init__(self, ollama_model: str = "tinyllama:latest", max_pages: int = 50):
+    def __init__(self, ollama_model: str = "deepseek-r1:14b", max_pages: int = 50):
         """
         Initialize the agentic web crawler.
         
@@ -39,6 +41,126 @@ class AgenticWebCrawler:
             return False
         parsed = urlparse(url)
         return parsed.netloc == self.base_domain
+    
+    def _extract_structured_data(self, html: str, url: str) -> Dict[str, Any]:
+        """
+        Extract structured data from HTML based on common e-commerce patterns.
+        
+        Args:
+            html: The HTML content to parse
+            url: The URL being scraped (for context)
+            
+        Returns:
+            Dictionary containing extracted structured data
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        structured_data = {
+            "products": [],
+            "categories": [],
+            "page_type": "unknown"
+        }
+        
+        # Detect if this is a product listing page
+        # Pattern 1: Books to Scrape style (product_pod)
+        product_pods = soup.find_all(['article', 'div', 'li'], class_=lambda x: x and 'product' in x.lower())
+        
+        if product_pods:
+            structured_data["page_type"] = "product_listing"
+            
+            for pod in product_pods:
+                product = {}
+                
+                # Extract title
+                title_tag = pod.find('h3')
+                if title_tag:
+                    title_link = title_tag.find('a')
+                    if title_link:
+                        product['title'] = title_link.get('title', title_link.get_text(strip=True))
+                        product['url'] = title_link.get('href', '')
+                
+                # Extract price
+                price_tag = pod.find(['p', 'span', 'div'], class_=lambda x: x and 'price' in x.lower())
+                if price_tag:
+                    product['price'] = price_tag.get_text(strip=True)
+                
+                # Extract availability/stock
+                availability_tag = pod.find(['p', 'span', 'div'], class_=lambda x: x and ('stock' in x.lower() or 'availability' in x.lower()))
+                if availability_tag:
+                    product['availability'] = availability_tag.get_text(strip=True)
+                
+                # Extract rating
+                rating_tag = pod.find(['p', 'span', 'div'], class_=lambda x: x and 'star-rating' in x.lower())
+                if rating_tag:
+                    # Rating is often in the class name like "star-rating Three"
+                    classes = rating_tag.get('class', [])
+                    for cls in classes:
+                        if cls in ['One', 'Two', 'Three', 'Four', 'Five']:
+                            product['rating'] = cls
+                            break
+                
+                # Extract image
+                img_tag = pod.find('img')
+                if img_tag:
+                    product['image'] = img_tag.get('src', '')
+                    product['image_alt'] = img_tag.get('alt', '')
+                
+                # Only add if we found at least a title or price
+                if 'title' in product or 'price' in product:
+                    structured_data["products"].append(product)
+        
+        # Pattern 2: Generic product detection
+        if not structured_data["products"]:
+            # Try to find products by common class names
+            potential_products = soup.find_all(['div', 'article', 'li'], class_=lambda x: x and any(
+                keyword in x.lower() for keyword in ['item', 'card', 'listing', 'result']
+            ))
+            
+            for item in potential_products[:50]:  # Limit to 50 items
+                product = {}
+                
+                # Look for price indicators
+                price_element = item.find(string=lambda text: text and any(
+                    symbol in text for symbol in ['$', '£', '€', '¥', 'USD', 'EUR', 'GBP']
+                ))
+                if price_element:
+                    product['price'] = price_element.strip()
+                
+                # Look for title/name
+                title_candidates = item.find_all(['h1', 'h2', 'h3', 'h4', 'a'], limit=3)
+                for candidate in title_candidates:
+                    text = candidate.get_text(strip=True)
+                    if len(text) > 5 and len(text) < 200:  # Reasonable title length
+                        product['title'] = text
+                        break
+                
+                if 'price' in product and 'title' in product:
+                    structured_data["products"].append(product)
+        
+        # Extract categories/navigation
+        nav_sections = soup.find_all(['nav', 'aside', 'div'], class_=lambda x: x and any(
+            keyword in x.lower() for keyword in ['category', 'categories', 'nav', 'sidebar']
+        ))
+        
+        for nav in nav_sections:
+            links = nav.find_all('a', href=True)
+            for link in links:
+                category_text = link.get_text(strip=True)
+                if category_text and len(category_text) < 50:
+                    structured_data["categories"].append({
+                        "name": category_text,
+                        "url": link['href']
+                    })
+        
+        # Remove duplicates from categories
+        seen_categories = set()
+        unique_categories = []
+        for cat in structured_data["categories"]:
+            if cat["name"] not in seen_categories:
+                seen_categories.add(cat["name"])
+                unique_categories.append(cat)
+        structured_data["categories"] = unique_categories[:30]  # Limit to 30 categories
+        
+        return structured_data
     
     def _normalize_url(self, url: str, base_url: str) -> str:
         """Normalize and complete relative URLs."""
@@ -152,6 +274,9 @@ If no links are relevant, respond with "NONE".
                 print(f"Failed to crawl {url}")
                 return None
             
+            # Extract structured data from HTML
+            structured_data = self._extract_structured_data(result.html, url)
+            
             page_data = {
                 "url": url,
                 "title": result.metadata.get("title", "No title"),
@@ -160,8 +285,15 @@ If no links are relevant, respond with "NONE".
                 "markdown_content": result.markdown[:5000] if result.markdown else "",
                 "links_found": len(result.links.get("internal", [])) if result.links else 0,
                 "timestamp": datetime.now().isoformat(),
-                "metadata": result.metadata
+                "metadata": result.metadata,
+                "structured_data": structured_data  # Add structured data
             }
+            
+            # Print summary of extracted data
+            if structured_data["products"]:
+                print(f"  → Extracted {len(structured_data['products'])} products")
+            if structured_data["categories"]:
+                print(f"  → Found {len(structured_data['categories'])} categories")
             
             return page_data
             
@@ -248,6 +380,131 @@ If no links are relevant, respond with "NONE".
         
         print(f"\nScraped data saved to: {output_path}")
         return output_path
+    
+    def generate_data_report(self, json_file: str) -> str:
+        """
+        Generate a data-focused report showing actual extracted information.
+        No AI summaries - just the actual data extracted from pages.
+        
+        Args:
+            json_file: Path to the JSON file with scraped data
+            
+        Returns:
+            Path to the data report file
+        """
+        print("\n" + "=" * 80)
+        print("GENERATING DATA REPORT")
+        print("=" * 80)
+        
+        # Load the scraped data
+        with open(json_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        report = []
+        report.append("# Web Crawling Data Report")
+        report.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append(f"\nTotal Pages Crawled: {data['crawl_summary']['total_pages']}")
+        report.append("\n" + "=" * 80 + "\n")
+        
+        # Extract all products from all pages
+        all_products = []
+        all_categories = set()
+        
+        for page in data.get('pages', []):
+            structured = page.get('structured_data', {})
+            if structured:
+                products = structured.get('products', [])
+                for product in products:
+                    product['source_url'] = page['url']
+                    all_products.append(product)
+                
+                categories = structured.get('categories', [])
+                for cat in categories:
+                    all_categories.add(cat['name'])
+        
+        # Summary
+        report.append("## Extraction Summary\n")
+        report.append(f"- **Total Products Extracted**: {len(all_products)}")
+        report.append(f"- **Unique Categories Found**: {len(all_categories)}")
+        report.append(f"- **Pages with Products**: {sum(1 for p in data['pages'] if p.get('structured_data', {}).get('products'))}")
+        report.append("")
+        
+        # Products table
+        if all_products:
+            report.append("## All Products Extracted\n")
+            report.append("| # | Title | Price | Rating | Availability | Source Page |")
+            report.append("|---|-------|-------|--------|--------------|-------------|")
+            
+            for i, product in enumerate(all_products, 1):
+                title = product.get('title', 'N/A')[:50]  # Truncate long titles
+                price = product.get('price', 'N/A')
+                rating = f"{product.get('rating', 'N/A')} ({product.get('rating_numeric', 'N/A')}/5)"
+                availability = product.get('availability', 'N/A')
+                source = product.get('source_url', 'N/A').split('/')[-2]  # Short URL
+                
+                report.append(f"| {i} | {title} | {price} | {rating} | {availability} | {source} |")
+            
+            report.append("")
+            
+            # Statistics
+            report.append("## Data Statistics\n")
+            
+            # Price stats
+            prices = []
+            for p in all_products:
+                price_str = p.get('price', '£0')
+                try:
+                    price_num = float(price_str.replace('£', '').replace('$', '').replace(',', ''))
+                    prices.append(price_num)
+                except:
+                    pass
+            
+            if prices:
+                report.append("### Price Analysis")
+                report.append(f"- **Minimum Price**: £{min(prices):.2f}")
+                report.append(f"- **Maximum Price**: £{max(prices):.2f}")
+                report.append(f"- **Average Price**: £{sum(prices)/len(prices):.2f}")
+                report.append(f"- **Total Value**: £{sum(prices):.2f}")
+                report.append("")
+            
+            # Rating stats
+            ratings = [p.get('rating_numeric', 0) for p in all_products if 'rating_numeric' in p]
+            if ratings:
+                report.append("### Rating Distribution")
+                for star in [5, 4, 3, 2, 1]:
+                    count = ratings.count(star)
+                    if count > 0:
+                        percentage = (count / len(ratings)) * 100
+                        bar = '█' * int(percentage / 5)
+                        report.append(f"- **{star}★**: {count} products ({percentage:.1f}%) {bar}")
+                report.append(f"- **Average Rating**: {sum(ratings)/len(ratings):.2f}★")
+                report.append("")
+        
+        # Detailed product info
+        if all_products:
+            report.append("## Detailed Product Data\n")
+            for i, product in enumerate(all_products[:20], 1):  # First 20 products
+                report.append(f"### Product {i}: {product.get('title', 'N/A')}\n")
+                report.append("```json")
+                # Remove source_url for cleaner display
+                display_product = {k: v for k, v in product.items() if k != 'source_url'}
+                report.append(json.dumps(display_product, indent=2, ensure_ascii=False))
+                report.append("```\n")
+        
+        # Categories
+        if all_categories:
+            report.append("## Categories Found\n")
+            for cat in sorted(all_categories)[:30]:
+                report.append(f"- {cat}")
+            report.append("")
+        
+        # Save report
+        report_filename = json_file.replace('.json', '_data_report.md')
+        with open(report_filename, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(report))
+        
+        print(f"\nData report saved to: {report_filename}")
+        return report_filename
     
     async def analyze_scraped_content(self, json_file: str) -> str:
         """
@@ -378,7 +635,7 @@ async def main():
     
     # Initialize crawler
     crawler = AgenticWebCrawler(
-        ollama_model="tinyllama:latest",
+        ollama_model="deepseek-r1:14b",
         max_pages=max_pages
     )
     
@@ -391,11 +648,18 @@ async def main():
     
     print(f"\n✓ Successfully crawled {len(scraped_data)} pages")
     
-    # Analyze content
-    analyze = input("\nDo you want to analyze the scraped content with AI? (y/n): ").strip().lower()
+    # Check if any products were extracted
+    total_products = sum(len(page.get('structured_data', {}).get('products', [])) for page in scraped_data)
     
-    if analyze == 'y':
-        analysis_file = await crawler.analyze_scraped_content(json_file)
+    if total_products > 0:
+        print(f"✓ Extracted {total_products} products from the pages")
+    
+    # Generate human-readable report
+    generate_report = input("\nGenerate human-readable analysis report? (y/n): ").strip().lower()
+    
+    if generate_report == 'y':
+        analysis_file = json_file.replace('.json', '_analysis.md')
+        json_to_markdown_complete(json_file, analysis_file)
         print(f"\n✓ Analysis complete! Check {analysis_file}")
     
     print("\n" + "=" * 80)
