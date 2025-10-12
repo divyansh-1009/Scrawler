@@ -1,14 +1,22 @@
 """
 Agentic AI Web Crawler using Crawl4AI and Ollama
-This script crawls websites intelligently using the deepseek-r1:14b model for navigation decisions.
+This script crawls websites intelligently using AI models for navigation decisions and schema-less content extraction.
+Features:
+- Goal-oriented crawling based on user objectives
+- AI-powered schema-less content extraction
+- Two-phase crawling (reconnaissance + targeted deep dive)
+- Learning system that improves from experience
+- Context-aware navigation with memory
 """
 
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
+from collections import defaultdict
 import ollama
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.extraction_strategy import NoExtractionStrategy
@@ -16,24 +24,130 @@ from bs4 import BeautifulSoup
 from convert_to_markdown import json_to_markdown_complete
 
 
-class AgenticWebCrawler:
+class ImprovedAgenticWebCrawler:
     """
-    An intelligent web crawler that uses AI to make navigation decisions.
+    An intelligent web crawler that uses AI to make navigation decisions and extract content schema-lessly.
     """
     
-    def __init__(self, ollama_model: str = "deepseek-r1:14b", max_pages: int = 50):
+    def __init__(self, 
+                 decision_model: str = "deepseek-r1:14b",
+                 extraction_model: str = "deepseek-r1:14b",
+                 max_pages: int = 50):
         """
-        Initialize the agentic web crawler.
+        Initialize the improved agentic web crawler.
         
         Args:
-            ollama_model: The Ollama model to use for decision making
+            decision_model: The Ollama model to use for strategic decisions
+            extraction_model: The Ollama model to use for content extraction
             max_pages: Maximum number of pages to crawl
         """
-        self.ollama_model = ollama_model
+        self.decision_model = decision_model
+        self.extraction_model = extraction_model
         self.max_pages = max_pages
         self.visited_urls = set()
         self.scraped_data = []
         self.base_domain = None
+        
+        # Goal-driven attributes
+        self.crawl_objective = ""
+        self.crawl_objective_analysis = {}
+        self.desired_data_types = []
+        
+        # Site understanding and learning
+        self.site_understanding = {
+            "site_type": None,
+            "main_sections": [],
+            "content_patterns": defaultdict(list),
+            "high_value_url_patterns": [],
+            "recommended_focus": ""
+        }
+        
+        # Track page values for learning
+        self.page_relevance_scores = {}
+        self.high_value_pages = []
+        
+        # Crawl phases
+        self.current_phase = "initialization"  # initialization, reconnaissance, deep_crawl
+        
+    async def analyze_user_objective(self, objective: str) -> Dict[str, Any]:
+        """
+        Use AI to analyze user's crawl objective and understand what they're looking for.
+        
+        Args:
+            objective: User's description of what information they want
+            
+        Returns:
+            Analysis including data types, extraction strategies, and focus areas
+        """
+        print("\n🤖 Analyzing your objective with AI...")
+        
+        prompt = f"""You are helping to plan a web crawling operation. Analyze the user's objective and provide a detailed crawl strategy.
+
+USER'S OBJECTIVE: "{objective}"
+
+Analyze this objective and provide:
+1. What TYPE of data they're looking for (e.g., products, articles, contact info, documentation, etc.)
+2. What specific FIELDS or attributes they likely want extracted
+3. What sections of a website would be most valuable
+4. What URL patterns to prioritize
+5. What URL patterns to avoid
+
+Respond in JSON format:
+{{
+  "data_types": ["primary type", "secondary type"],
+  "key_fields": ["field1", "field2", "field3"],
+  "valuable_sections": ["section1", "section2"],
+  "url_patterns_to_seek": ["pattern1", "pattern2"],
+  "url_patterns_to_avoid": ["pattern1", "pattern2"],
+  "extraction_strategy": "Description of how to approach extraction",
+  "success_criteria": "How to know when we have enough data"
+}}
+
+Be specific and actionable."""
+
+        try:
+            response = ollama.generate(
+                model=self.decision_model,
+                prompt=prompt
+            )
+            
+            # Try to extract JSON from response
+            response_text = response['response'].strip()
+            
+            # Handle markdown code blocks
+            if '```json' in response_text:
+                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            elif '```' in response_text:
+                json_match = re.search(r'```\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            
+            analysis = json.loads(response_text)
+            
+            print("\n✓ Objective Analysis Complete:")
+            print(f"  • Data Types: {', '.join(analysis.get('data_types', []))}")
+            print(f"  • Key Fields: {', '.join(analysis.get('key_fields', []))}")
+            print(f"  • Focus Areas: {', '.join(analysis.get('valuable_sections', []))}")
+            
+            self.crawl_objective_analysis = analysis
+            self.desired_data_types = analysis.get('data_types', [])
+            
+            return analysis
+            
+        except Exception as e:
+            print(f"⚠ Analysis error: {e}")
+            # Fallback to basic analysis
+            return {
+                "data_types": ["general content"],
+                "key_fields": ["title", "content", "links"],
+                "valuable_sections": ["main content"],
+                "url_patterns_to_seek": [],
+                "url_patterns_to_avoid": ["login", "signup", "cart"],
+                "extraction_strategy": "Extract all available content",
+                "success_criteria": "Crawl specified number of pages"
+            }
         
     def _is_same_domain(self, url: str) -> bool:
         """Check if URL belongs to the same domain as the base URL."""
@@ -42,125 +156,175 @@ class AgenticWebCrawler:
         parsed = urlparse(url)
         return parsed.netloc == self.base_domain
     
-    def _extract_structured_data(self, html: str, url: str) -> Dict[str, Any]:
+    def _extract_url_pattern(self, url: str) -> str:
         """
-        Extract structured data from HTML based on common e-commerce patterns.
+        Extract pattern from URL for learning purposes.
+        Example: /products/123/details -> /products/*/details
+        """
+        parsed = urlparse(url)
+        path_parts = [p for p in parsed.path.split('/') if p]
+        
+        pattern_parts = []
+        for part in path_parts:
+            # Replace numeric IDs and long strings with wildcards
+            if part.isdigit() or len(part) > 30:
+                pattern_parts.append('*')
+            else:
+                pattern_parts.append(part)
+        
+        return '/' + '/'.join(pattern_parts) if pattern_parts else '/'
+    
+    def _find_similar_visited_urls(self, url: str, limit: int = 3) -> List[str]:
+        """Find similar URLs we've already visited for learning."""
+        pattern = self._extract_url_pattern(url)
+        similar = []
+        
+        for visited in self.visited_urls:
+            if self._extract_url_pattern(visited) == pattern:
+                similar.append(visited)
+                if len(similar) >= limit:
+                    break
+        
+        return similar
+    
+    async def _extract_content_with_ai(self, html: str, url: str, markdown: str = "") -> Dict[str, Any]:
+        """
+        Use AI to understand and extract relevant content WITHOUT hardcoded patterns.
+        The AI decides what's important based on the crawl objective.
         
         Args:
             html: The HTML content to parse
-            url: The URL being scraped (for context)
+            url: The URL being scraped
+            markdown: Markdown version of content (if available)
             
         Returns:
-            Dictionary containing extracted structured data
+            Dictionary containing AI-extracted structured data
         """
         soup = BeautifulSoup(html, 'lxml')
-        structured_data = {
-            "products": [],
-            "categories": [],
-            "page_type": "unknown"
-        }
         
-        # Detect if this is a product listing page
-        # Pattern 1: Books to Scrape style (product_pod)
-        product_pods = soup.find_all(['article', 'div', 'li'], class_=lambda x: x and 'product' in x.lower())
+        # Remove navigation, footer, header to focus on main content
+        for tag in soup.find_all(['nav', 'header', 'footer', 'script', 'style']):
+            tag.decompose()
         
-        if product_pods:
-            structured_data["page_type"] = "product_listing"
+        # Get clean text content
+        page_text = soup.get_text(separator='\n', strip=True)
+        
+        # Use markdown if available (cleaner), otherwise use text
+        content_to_analyze = markdown[:4000] if markdown else page_text[:4000]
+        
+        # Get structural hints
+        headers = [h.get_text(strip=True) for h in soup.find_all(['h1', 'h2', 'h3']) if h.get_text(strip=True)][:15]
+        
+        # Get main content links
+        main_links = []
+        for a in soup.find_all('a', href=True)[:30]:
+            text = a.get_text(strip=True)
+            if text and len(text) > 2:
+                main_links.append(text)
+        
+        prompt = f"""You are analyzing a web page to extract relevant information based on a specific objective.
+
+CRAWL OBJECTIVE: {self.crawl_objective}
+
+TARGET DATA TYPES: {', '.join(self.desired_data_types)}
+KEY FIELDS TO EXTRACT: {', '.join(self.crawl_objective_analysis.get('key_fields', []))}
+
+PAGE URL: {url}
+
+PAGE HEADERS:
+{chr(10).join(headers[:10])}
+
+PAGE CONTENT (excerpt):
+{content_to_analyze}
+
+MAIN LINKS:
+{', '.join(main_links[:15])}
+
+YOUR TASK:
+1. Determine the TYPE of page this is (e.g., "product listing", "article", "documentation", "about page", "homepage", etc.)
+2. Rate how RELEVANT this page is to the crawl objective (0-10 scale)
+3. Extract ALL relevant structured data that matches the objective
+4. Be FLEXIBLE - adapt your extraction schema to what's actually on the page
+
+Respond in JSON format:
+{{
+  "page_type": "...",
+  "relevance_score": 0-10,
+  "key_content": {{
+    // Extract whatever structured data is relevant
+    // Examples: "items": [...], "article_text": "...", "metadata": {{...}}
+    // Adapt to the page content and objective
+  }},
+  "reasoning": "Brief explanation of why this page is/isn't relevant",
+  "content_summary": "One sentence summary of page content"
+}}
+
+Be thorough but concise. Extract actual data, not descriptions."""
+
+        try:
+            response = ollama.generate(
+                model=self.extraction_model,
+                prompt=prompt
+            )
             
-            for pod in product_pods:
-                product = {}
-                
-                # Extract title
-                title_tag = pod.find('h3')
-                if title_tag:
-                    title_link = title_tag.find('a')
-                    if title_link:
-                        product['title'] = title_link.get('title', title_link.get_text(strip=True))
-                        product['url'] = title_link.get('href', '')
-                
-                # Extract price
-                price_tag = pod.find(['p', 'span', 'div'], class_=lambda x: x and 'price' in x.lower())
-                if price_tag:
-                    product['price'] = price_tag.get_text(strip=True)
-                
-                # Extract availability/stock
-                availability_tag = pod.find(['p', 'span', 'div'], class_=lambda x: x and ('stock' in x.lower() or 'availability' in x.lower()))
-                if availability_tag:
-                    product['availability'] = availability_tag.get_text(strip=True)
-                
-                # Extract rating
-                rating_tag = pod.find(['p', 'span', 'div'], class_=lambda x: x and 'star-rating' in x.lower())
-                if rating_tag:
-                    # Rating is often in the class name like "star-rating Three"
-                    classes = rating_tag.get('class', [])
-                    for cls in classes:
-                        if cls in ['One', 'Two', 'Three', 'Four', 'Five']:
-                            product['rating'] = cls
-                            break
-                
-                # Extract image
-                img_tag = pod.find('img')
-                if img_tag:
-                    product['image'] = img_tag.get('src', '')
-                    product['image_alt'] = img_tag.get('alt', '')
-                
-                # Only add if we found at least a title or price
-                if 'title' in product or 'price' in product:
-                    structured_data["products"].append(product)
-        
-        # Pattern 2: Generic product detection
-        if not structured_data["products"]:
-            # Try to find products by common class names
-            potential_products = soup.find_all(['div', 'article', 'li'], class_=lambda x: x and any(
-                keyword in x.lower() for keyword in ['item', 'card', 'listing', 'result']
-            ))
+            # Extract JSON from response
+            response_text = response['response'].strip()
             
-            for item in potential_products[:50]:  # Limit to 50 items
-                product = {}
-                
-                # Look for price indicators
-                price_element = item.find(string=lambda text: text and any(
-                    symbol in text for symbol in ['$', '£', '€', '¥', 'USD', 'EUR', 'GBP']
-                ))
-                if price_element:
-                    product['price'] = price_element.strip()
-                
-                # Look for title/name
-                title_candidates = item.find_all(['h1', 'h2', 'h3', 'h4', 'a'], limit=3)
-                for candidate in title_candidates:
-                    text = candidate.get_text(strip=True)
-                    if len(text) > 5 and len(text) < 200:  # Reasonable title length
-                        product['title'] = text
-                        break
-                
-                if 'price' in product and 'title' in product:
-                    structured_data["products"].append(product)
+            # Handle markdown code blocks
+            if '```json' in response_text:
+                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            elif '```' in response_text:
+                json_match = re.search(r'```\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            
+            extracted = json.loads(response_text)
+            
+            # Update site understanding
+            self._update_site_knowledge(url, extracted)
+            
+            return extracted
+            
+        except Exception as e:
+            print(f"  ⚠ AI extraction error: {str(e)[:100]}")
+            # Fallback to basic extraction
+            return {
+                "page_type": "unknown",
+                "relevance_score": 5,
+                "key_content": {
+                    "title": soup.find('title').get_text() if soup.find('title') else "No title",
+                    "headers": headers,
+                    "text_excerpt": page_text[:500]
+                },
+                "reasoning": "Fallback extraction due to error",
+                "content_summary": "Content extracted with fallback method"
+            }
+    
+    def _update_site_knowledge(self, url: str, extraction_result: Dict):
+        """
+        Learn from each page to improve future decisions.
+        """
+        relevance = extraction_result.get('relevance_score', 0)
+        self.page_relevance_scores[url] = relevance
         
-        # Extract categories/navigation
-        nav_sections = soup.find_all(['nav', 'aside', 'div'], class_=lambda x: x and any(
-            keyword in x.lower() for keyword in ['category', 'categories', 'nav', 'sidebar']
-        ))
-        
-        for nav in nav_sections:
-            links = nav.find_all('a', href=True)
-            for link in links:
-                category_text = link.get_text(strip=True)
-                if category_text and len(category_text) < 50:
-                    structured_data["categories"].append({
-                        "name": category_text,
-                        "url": link['href']
-                    })
-        
-        # Remove duplicates from categories
-        seen_categories = set()
-        unique_categories = []
-        for cat in structured_data["categories"]:
-            if cat["name"] not in seen_categories:
-                seen_categories.add(cat["name"])
-                unique_categories.append(cat)
-        structured_data["categories"] = unique_categories[:30]  # Limit to 30 categories
-        
-        return structured_data
+        if relevance >= 7:  # High-value page
+            self.high_value_pages.append(url)
+            
+            # Learn URL pattern
+            url_pattern = self._extract_url_pattern(url)
+            if url_pattern not in self.site_understanding['high_value_url_patterns']:
+                self.site_understanding['high_value_url_patterns'].append(url_pattern)
+            
+            # Learn content patterns
+            page_type = extraction_result.get('page_type')
+            if page_type:
+                self.site_understanding['content_patterns'][page_type].append({
+                    'url': url,
+                    'pattern': url_pattern,
+                    'relevance': relevance
+                })
     
     def _normalize_url(self, url: str, base_url: str) -> str:
         """Normalize and complete relative URLs."""
@@ -169,115 +333,192 @@ class AgenticWebCrawler:
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
     
-    async def _extract_links(self, html: str, base_url: str) -> List[str]:
-        """Extract all links from HTML content, filtering out static assets."""
-        import re
+    async def _extract_links_with_context(self, html: str, base_url: str) -> List[Dict]:
+        """
+        Extract links WITH their surrounding context for better AI decision-making.
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        links_with_context = []
         
-        # Patterns to exclude (static assets, non-content files)
-        exclude_patterns = [
-            r'\.(jpg|jpeg|png|gif|svg|ico|webp|bmp)$',  # Images
-            r'\.(css|js|woff|woff2|ttf|eot)$',          # Stylesheets, fonts, scripts
-            r'\.(pdf|zip|tar|gz|rar|exe|dmg)$',         # Documents, archives
-            r'\.(mp4|mp3|avi|mov|wav|flac)$',           # Media files
-            r'(login|signin|signup|register|logout)',   # Auth pages
-            r'(cart|checkout|wishlist|account)',        # E-commerce
-            r'(facebook\.com|twitter\.com|instagram\.com|linkedin\.com|youtube\.com)',  # Social media
-            r'(mailto:|tel:|javascript:)',              # Special protocols
-        ]
+        # Patterns to exclude from objective analysis
+        avoid_patterns = self.crawl_objective_analysis.get('url_patterns_to_avoid', [])
+        avoid_patterns.extend(['javascript:', 'mailto:', 'tel:', '#', '.jpg', '.png', '.pdf', '.css', '.js'])
         
-        # Compile patterns
-        exclude_regex = re.compile('|'.join(exclude_patterns), re.IGNORECASE)
-        
-        # Simple regex to find href attributes
-        links = re.findall(r'href=["\']([^"\']+)["\']', html)
-        normalized_links = []
-        
-        for link in links:
+        for link in soup.find_all('a', href=True):
+            href = link.get('href')
+            
+            # Skip obvious bad links
+            if any(pattern.lower() in href.lower() for pattern in avoid_patterns):
+                continue
+            
             try:
-                # Skip if matches exclude pattern
-                if exclude_regex.search(link):
+                full_url = self._normalize_url(href, base_url)
+            except:
                     continue
                 
-                full_url = self._normalize_url(link, base_url)
-                
-                # Additional checks
-                if (self._is_same_domain(full_url) and 
-                    full_url not in self.visited_urls and
-                    not exclude_regex.search(full_url)):
-                    normalized_links.append(full_url)
-            except Exception:
+            if not self._is_same_domain(full_url) or full_url in self.visited_urls:
+                continue
+            
+            # Gather rich context
+            anchor_text = link.get_text(strip=True)
+            if not anchor_text or len(anchor_text) < 2:
                 continue
                 
-        return list(set(normalized_links))
-    
-    async def _ask_ollama_for_navigation(self, current_url: str, available_links: List[str], content_summary: str) -> List[str]:
-        """
-        Use Ollama to decide which links to crawl next.
-        
-        Args:
-            current_url: The current page URL
-            available_links: List of available links to choose from
-            content_summary: Summary of current page content
+            # Get surrounding text (parent element context)
+            parent = link.parent
+            context_text = parent.get_text(strip=True)[:200] if parent else ""
             
-        Returns:
-            List of URLs to crawl next
+            # Get any title or aria-label
+            title = link.get('title', '')
+            aria_label = link.get('aria-label', '')
+            
+            # Get link position/importance
+            is_in_nav = bool(link.find_parent(['nav', 'header']))
+            is_in_main = bool(link.find_parent('main'))
+            is_prominent = bool(link.find_parent(['h1', 'h2', 'h3']))
+            
+            links_with_context.append({
+                'url': full_url,
+                'anchor_text': anchor_text,
+                'context': context_text,
+                'title': title,
+                'aria_label': aria_label,
+                'is_navigation': is_in_nav,
+                'is_main_content': is_in_main,
+                'is_prominent': is_prominent,
+                'url_path': urlparse(full_url).path
+            })
+        
+        return links_with_context
+    
+    async def _score_url_relevance(self, link_info: Dict) -> Dict:
+        """
+        Use AI to predict how relevant a URL is before crawling it.
+        This saves time by avoiding low-value pages.
+        """
+        url = link_info['url']
+        
+        # Learn from history
+        similar_urls = self._find_similar_visited_urls(url)
+        historical_scores = [self.page_relevance_scores.get(u, 0) for u in similar_urls]
+        
+        # Check if URL pattern matches known high-value patterns
+        url_pattern = self._extract_url_pattern(url)
+        pattern_bonus = 2 if url_pattern in self.site_understanding['high_value_url_patterns'] else 0
+        
+        # Quick heuristic score
+        heuristic_score = 5 + pattern_bonus
+        
+        # Boost if in main content
+        if link_info.get('is_main_content'):
+            heuristic_score += 1
+        if link_info.get('is_prominent'):
+            heuristic_score += 1
+        
+        # Check against seek patterns
+        seek_patterns = self.crawl_objective_analysis.get('url_patterns_to_seek', [])
+        if any(pattern.lower() in url.lower() for pattern in seek_patterns):
+            heuristic_score += 2
+        
+        return {
+            'url': url,
+            'relevance_score': heuristic_score,
+            'historical_avg': sum(historical_scores) / len(historical_scores) if historical_scores else 5,
+            'should_crawl': heuristic_score >= 5,
+            'priority': 'high' if heuristic_score >= 8 else 'medium' if heuristic_score >= 6 else 'low'
+        }
+    
+    async def _ask_ollama_for_navigation_advanced(
+        self, 
+        current_url: str, 
+        available_links: List[Dict],
+        page_extraction: Dict
+    ) -> List[str]:
+        """
+        Advanced AI navigation with full context and learning.
         """
         if not available_links:
             return []
         
-        # Limit the number of links to analyze at once
-        links_to_analyze = available_links[:20]
+        # Score all links first
+        scored_links = []
+        for link_info in available_links[:30]:
+            score_info = await self._score_url_relevance(link_info)
+            scored_links.append({**link_info, **score_info})
         
-        prompt = f"""You are a web crawler assistant. Your task is to decide which links to crawl next.
+        # Sort by relevance
+        scored_links.sort(key=lambda x: x['relevance_score'], reverse=True)
+        
+        # Take top candidates
+        top_candidates = scored_links[:12]
+        
+        # Format for AI
+        links_summary = []
+        for i, link in enumerate(top_candidates, 1):
+            links_summary.append(
+                f"{i}. [{link['relevance_score']:.1f}] {link['anchor_text'][:50]} → {link['url_path']}"
+            )
+        
+        prompt = f"""You are guiding a web crawler. Review these pre-scored URLs and select the best ones to crawl next.
 
-Current URL: {current_url}
-Current Page Summary: {content_summary[:500]}...
+CRAWL OBJECTIVE: {self.crawl_objective}
 
-Available Links (select up to 5 most relevant):
-{chr(10).join([f"{i+1}. {link}" for i, link in enumerate(links_to_analyze)])}
+PROGRESS:
+- Pages crawled: {len(self.visited_urls)}/{self.max_pages}
+- High-value pages: {len(self.high_value_pages)}
+- Current phase: {self.current_phase}
 
-Analyze these links and select the TOP 5 most relevant and important links to crawl.
-Consider:
-1. Links that likely contain main content (not login, cart, social media)
-2. Links that go deeper into the site structure
-3. Links that represent different sections or categories
+CURRENT PAGE: {current_url}
+Page type: {page_extraction.get('page_type', 'unknown')}
+Relevance: {page_extraction.get('relevance_score', '?')}/10
+Summary: {page_extraction.get('content_summary', 'N/A')}
 
-Respond ONLY with the numbers of the links to crawl (comma-separated, e.g., "1,3,5,7,9").
-If no links are relevant, respond with "NONE".
-"""
+LEARNED PATTERNS:
+High-value URL patterns: {self.site_understanding['high_value_url_patterns'][:5]}
+
+TOP CANDIDATE URLS (with pre-scored relevance [score]):
+{chr(10).join(links_summary)}
+
+Select 3-5 URLs that best match the objective. Consider:
+1. URLs matching learned high-value patterns
+2. URLs with high relevance scores
+3. URLs that explore new areas vs going deeper
+4. Current progress toward objective
+
+Respond with ONLY the numbers (comma-separated, e.g., "1,3,5,8").
+If no links are worth crawling, respond "NONE"."""
         
         try:
             response = ollama.generate(
-                model=self.ollama_model,
+                model=self.decision_model,
                 prompt=prompt
             )
             
             answer = response['response'].strip()
             
-            if answer.upper() == "NONE":
-                print("  → AI recommended no links to crawl")
+            if 'NONE' in answer.upper():
+                print("  → AI: No valuable links found")
                 return []
             
-            # Extract numbers from response
-            import re
+            # Extract numbers
             numbers = re.findall(r'\d+', answer)
-            selected_links = []
+            selected_urls = []
             
-            for num in numbers[:5]:  # Limit to 5 links
+            for num in numbers[:5]:
                 idx = int(num) - 1
-                if 0 <= idx < len(links_to_analyze):
-                    selected_links.append(links_to_analyze[idx])
+                if 0 <= idx < len(top_candidates):
+                    selected_urls.append(top_candidates[idx]['url'])
             
-            return selected_links
+            return selected_urls
             
         except Exception as e:
-            print(f"  → AI Error: {str(e)[:100]}")
-            print(f"  → Skipping link selection for this page")
-            return []
+            print(f"  ⚠ Navigation AI error: {str(e)[:100]}")
+            # Fallback: return top 3 by score
+            return [link['url'] for link in scored_links[:3]]
     
     async def _crawl_page(self, url: str, crawler: AsyncWebCrawler) -> Optional[Dict[str, Any]]:
         """
-        Crawl a single page and extract content.
+        Crawl a single page and extract content using AI.
         
         Args:
             url: The URL to crawl
@@ -287,7 +528,7 @@ If no links are relevant, respond with "NONE".
             Dictionary containing page data or None if failed
         """
         try:
-            print(f"Crawling: {url}")
+            print(f"📄 Crawling: {url}")
             
             result = await crawler.arun(
                 url=url,
@@ -296,39 +537,126 @@ If no links are relevant, respond with "NONE".
             )
             
             if not result.success:
-                print(f"Failed to crawl {url}")
+                print(f"  ✗ Failed to crawl")
                 return None
             
-            # Extract structured data from HTML
-            structured_data = self._extract_structured_data(result.html, url)
+            # Use AI to extract content (schema-less)
+            ai_extraction = await self._extract_content_with_ai(
+                result.html, 
+                url,
+                result.markdown if result.markdown else ""
+            )
             
             page_data = {
                 "url": url,
                 "title": result.metadata.get("title", "No title"),
                 "description": result.metadata.get("description", ""),
-                "html_content": result.html[:5000],  # Store first 5000 chars
-                "markdown_content": result.markdown[:5000] if result.markdown else "",
-                "links_found": len(result.links.get("internal", [])) if result.links else 0,
                 "timestamp": datetime.now().isoformat(),
                 "metadata": result.metadata,
-                "structured_data": structured_data  # Add structured data
+                "ai_extraction": ai_extraction,  # AI-extracted structured data
+                "relevance_score": ai_extraction.get('relevance_score', 0),
+                "page_type": ai_extraction.get('page_type', 'unknown')
             }
             
-            # Print summary of extracted data
-            if structured_data["products"]:
-                print(f"  → Extracted {len(structured_data['products'])} products")
-            if structured_data["categories"]:
-                print(f"  → Found {len(structured_data['categories'])} categories")
+            # Print extraction summary
+            relevance = ai_extraction.get('relevance_score', 0)
+            page_type = ai_extraction.get('page_type', 'unknown')
+            print(f"  ✓ Type: {page_type} | Relevance: {relevance}/10")
+            
+            # Show key content extracted
+            key_content = ai_extraction.get('key_content', {})
+            if key_content:
+                content_types = list(key_content.keys())
+                print(f"  → Extracted: {', '.join(content_types[:3])}")
             
             return page_data
             
         except Exception as e:
-            print(f"Error crawling {url}: {e}")
+            print(f"  ✗ Error: {str(e)[:80]}")
             return None
+    
+    async def _analyze_site_structure(self) -> Dict:
+        """
+        Analyze crawled pages from reconnaissance to understand site structure.
+        """
+        print("\n🔍 Analyzing site structure...")
+        
+        # Collect page types and relevance scores
+        page_types = {}
+        for page in self.scraped_data:
+            page_type = page.get('page_type', 'unknown')
+            relevance = page.get('relevance_score', 0)
+            if page_type not in page_types:
+                page_types[page_type] = []
+            page_types[page_type].append(relevance)
+        
+        # Build summary for AI
+        pages_summary = []
+        for page in self.scraped_data[:10]:
+            pages_summary.append(f"- {page['url']}: {page['page_type']} (relevance: {page.get('relevance_score', 0)}/10)")
+        
+        prompt = f"""Analyze the reconnaissance crawl results and provide strategic guidance.
+
+CRAWL OBJECTIVE: {self.crawl_objective}
+
+PAGES CRAWLED IN RECONNAISSANCE ({len(self.scraped_data)} pages):
+{chr(10).join(pages_summary)}
+
+PAGE TYPE DISTRIBUTION:
+{json.dumps({pt: {'count': len(scores), 'avg_relevance': sum(scores)/len(scores)} for pt, scores in page_types.items()}, indent=2)}
+
+HIGH-VALUE URL PATTERNS DISCOVERED:
+{self.site_understanding['high_value_url_patterns']}
+
+Provide strategic analysis:
+1. What TYPE of website is this?
+2. Which sections/page types are most valuable for the objective?
+3. What URL patterns should we prioritize in deep crawl?
+4. What's the recommended crawl strategy going forward?
+
+Respond in JSON:
+{{
+  "site_type": "...",
+  "most_valuable_page_types": ["type1", "type2"],
+  "recommended_focus": "Description of where to focus",
+  "high_priority_patterns": ["pattern1", "pattern2"],
+  "strategy": "continue_deep | adjust_objective | site_not_suitable"
+}}"""
+
+        try:
+            response = ollama.generate(
+                model=self.decision_model,
+                prompt=prompt
+            )
+            
+            response_text = response['response'].strip()
+            if '```json' in response_text:
+                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            
+            analysis = json.loads(response_text)
+            
+            print(f"  ✓ Site Type: {analysis.get('site_type', 'Unknown')}")
+            print(f"  ✓ Focus: {analysis.get('recommended_focus', 'General crawl')}")
+            
+            return analysis
+            
+        except Exception as e:
+            print(f"  ⚠ Analysis error: {e}")
+            return {
+                "site_type": "unknown",
+                "most_valuable_page_types": list(page_types.keys())[:2],
+                "recommended_focus": "Continue crawling all page types",
+                "high_priority_patterns": self.site_understanding['high_value_url_patterns'],
+                "strategy": "continue_deep"
+            }
     
     async def crawl_website(self, start_url: str) -> List[Dict[str, Any]]:
         """
-        Main crawling method that orchestrates the entire process.
+        Two-phase intelligent crawling:
+        Phase 1: Reconnaissance - understand site structure
+        Phase 2: Targeted deep crawl - focus on valuable content
         
         Args:
             start_url: The starting URL for crawling
@@ -340,15 +668,81 @@ If no links are relevant, respond with "NONE".
         parsed_url = urlparse(start_url)
         self.base_domain = parsed_url.netloc
         
-        print(f"Starting crawl of {start_url}")
-        print(f"Using model: {self.ollama_model}")
+        print(f"\n{'='*80}")
+        print(f"🚀 STARTING INTELLIGENT WEB CRAWL")
+        print(f"{'='*80}")
+        print(f"Target: {start_url}")
+        print(f"Objective: {self.crawl_objective}")
         print(f"Max pages: {self.max_pages}")
-        print("-" * 80)
+        print(f"{'='*80}\n")
         
-        # Initialize the crawler
-        async with AsyncWebCrawler(verbose=True) as crawler:
-            # Queue of URLs to crawl
+        # PHASE 1: RECONNAISSANCE
+        recon_budget = max(5, self.max_pages // 10)
+        self.current_phase = "reconnaissance"
+        
+        print(f"📡 PHASE 1: RECONNAISSANCE ({recon_budget} pages)")
+        print(f"{'─'*80}")
+        
+        async with AsyncWebCrawler(verbose=False) as crawler:
             url_queue = [start_url]
+            
+            while url_queue and len(self.visited_urls) < recon_budget:
+                current_url = url_queue.pop(0)
+                
+                if current_url in self.visited_urls:
+                    continue
+                
+                self.visited_urls.add(current_url)
+                
+                # Crawl page
+                page_data = await self._crawl_page(current_url, crawler)
+                
+                if page_data:
+                    self.scraped_data.append(page_data)
+                    
+                    # Get page HTML for link extraction
+                    result = await crawler.arun(url=current_url, bypass_cache=True)
+                    if result.success:
+                        # Extract links with context
+                        links = await self._extract_links_with_context(result.html, current_url)
+                        
+                        if links:
+                            # Simple selection in recon phase - just take diverse links
+                            selected = links[:8]  # Take more links in recon
+                            for link in selected:
+                                if link['url'] not in self.visited_urls and link['url'] not in url_queue:
+                                    url_queue.append(link['url'])
+                
+                print(f"  Progress: {len(self.visited_urls)}/{recon_budget} recon pages\n")
+        
+        # Analyze site structure
+        site_analysis = await self._analyze_site_structure()
+        self.site_understanding.update(site_analysis)
+        
+        # PHASE 2: TARGETED DEEP CRAWL
+        deep_budget = self.max_pages - len(self.visited_urls)
+        self.current_phase = "deep_crawl"
+        
+        print(f"\n{'─'*80}")
+        print(f"🎯 PHASE 2: TARGETED DEEP CRAWL ({deep_budget} pages)")
+        print(f"{'─'*80}\n")
+        
+        async with AsyncWebCrawler(verbose=False) as crawler:
+            # Build priority queue from high-value pages discovered in recon
+            url_queue = []
+            
+            # Re-extract links from high-value pages
+            for page in self.scraped_data:
+                if page.get('relevance_score', 0) >= 6:
+                    result = await crawler.arun(url=page['url'], bypass_cache=True)
+                    if result.success:
+                        links = await self._extract_links_with_context(result.html, page['url'])
+                        for link in links[:5]:
+                            if link['url'] not in self.visited_urls:
+                                url_queue.append(link['url'])
+            
+            # Remove duplicates
+            url_queue = list(dict.fromkeys(url_queue))
             
             while url_queue and len(self.visited_urls) < self.max_pages:
                 current_url = url_queue.pop(0)
@@ -358,345 +752,137 @@ If no links are relevant, respond with "NONE".
                 
                 self.visited_urls.add(current_url)
                 
-                # Crawl the page
+                # Crawl page
                 page_data = await self._crawl_page(current_url, crawler)
                 
                 if page_data:
                     self.scraped_data.append(page_data)
                     
-                    # Extract links from the page
-                    links = await self._extract_links(page_data.get("html_content", ""), current_url)
+                    # Extract links with context
+                    result = await crawler.arun(url=current_url, bypass_cache=True)
+                    if result.success:
+                        links = await self._extract_links_with_context(result.html, current_url)
                     
                     if links:
-                        # Use AI to decide which links to crawl
-                        content_summary = f"{page_data['title']}. {page_data['description']}"
-                        selected_links = await self._ask_ollama_for_navigation(
+                            # Use advanced AI navigation
+                            selected_urls = await self._ask_ollama_for_navigation_advanced(
                             current_url, 
                             links, 
-                            content_summary
-                        )
-                        
-                        print(f"AI selected {len(selected_links)} links to crawl from {current_url}")
-                        
-                        # Add selected links to queue
-                        for link in selected_links:
-                            if link not in self.visited_urls and link not in url_queue:
-                                url_queue.append(link)
+                                page_data.get('ai_extraction', {})
+                            )
+                            
+                            print(f"  → AI selected {len(selected_urls)} links")
+                            
+                            for url in selected_urls:
+                                if url not in self.visited_urls and url not in url_queue:
+                                    url_queue.append(url)
                 
-                print(f"Progress: {len(self.visited_urls)}/{self.max_pages} pages crawled")
-                print(f"Queue size: {len(url_queue)}")
-                print("-" * 80)
+                print(f"  Progress: {len(self.visited_urls)}/{self.max_pages} | Queue: {len(url_queue)} | High-value: {len(self.high_value_pages)}\n")
+        
+        print(f"\n{'='*80}")
+        print(f"✅ CRAWL COMPLETE")
+        print(f"{'='*80}")
+        print(f"Total pages: {len(self.scraped_data)}")
+        print(f"High-value pages: {len(self.high_value_pages)}")
+        print(f"Avg relevance: {sum(self.page_relevance_scores.values())/len(self.page_relevance_scores) if self.page_relevance_scores else 0:.1f}/10")
+        print(f"{'='*80}\n")
         
         return self.scraped_data
     
     def save_to_json(self, filename: str = "scraped_data.json"):
-        """Save scraped data to JSON file."""
+        """Save only the extracted relevant data without crawl metadata."""
         output_path = os.path.join(os.getcwd(), filename)
+        
+        # Extract only the relevant content based on objective
+        extracted_data = []
+        for page in self.scraped_data:
+            if page.get('relevance_score', 0) >= 5:  # Only include somewhat relevant pages
+                page_data = {
+                    "url": page['url'],
+                    "extracted_content": page.get('ai_extraction', {}).get('key_content', {}),
+                    "relevance": page.get('relevance_score', 0)
+                }
+                extracted_data.append(page_data)
         
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump({
-                "crawl_summary": {
-                    "total_pages": len(self.scraped_data),
-                    "urls_visited": list(self.visited_urls),
-                    "timestamp": datetime.now().isoformat()
-                },
-                "pages": self.scraped_data
+                "objective": self.crawl_objective,
+                "extracted_data": extracted_data
             }, f, indent=2, ensure_ascii=False)
         
-        print(f"\nScraped data saved to: {output_path}")
+        print(f"\n💾 Data saved to: {output_path}")
         return output_path
-    
-    def generate_data_report(self, json_file: str) -> str:
-        """
-        Generate a data-focused report showing actual extracted information.
-        No AI summaries - just the actual data extracted from pages.
-        
-        Args:
-            json_file: Path to the JSON file with scraped data
-            
-        Returns:
-            Path to the data report file
-        """
-        print("\n" + "=" * 80)
-        print("GENERATING DATA REPORT")
-        print("=" * 80)
-        
-        # Load the scraped data
-        with open(json_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        report = []
-        report.append("# Web Crawling Data Report")
-        report.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        report.append(f"\nTotal Pages Crawled: {data['crawl_summary']['total_pages']}")
-        report.append("\n" + "=" * 80 + "\n")
-        
-        # Extract all products from all pages
-        all_products = []
-        all_categories = set()
-        
-        for page in data.get('pages', []):
-            structured = page.get('structured_data', {})
-            if structured:
-                products = structured.get('products', [])
-                for product in products:
-                    product['source_url'] = page['url']
-                    all_products.append(product)
-                
-                categories = structured.get('categories', [])
-                for cat in categories:
-                    all_categories.add(cat['name'])
-        
-        # Summary
-        report.append("## Extraction Summary\n")
-        report.append(f"- **Total Products Extracted**: {len(all_products)}")
-        report.append(f"- **Unique Categories Found**: {len(all_categories)}")
-        report.append(f"- **Pages with Products**: {sum(1 for p in data['pages'] if p.get('structured_data', {}).get('products'))}")
-        report.append("")
-        
-        # Products table
-        if all_products:
-            report.append("## All Products Extracted\n")
-            report.append("| # | Title | Price | Rating | Availability | Source Page |")
-            report.append("|---|-------|-------|--------|--------------|-------------|")
-            
-            for i, product in enumerate(all_products, 1):
-                title = product.get('title', 'N/A')[:50]  # Truncate long titles
-                price = product.get('price', 'N/A')
-                rating = f"{product.get('rating', 'N/A')} ({product.get('rating_numeric', 'N/A')}/5)"
-                availability = product.get('availability', 'N/A')
-                source = product.get('source_url', 'N/A').split('/')[-2]  # Short URL
-                
-                report.append(f"| {i} | {title} | {price} | {rating} | {availability} | {source} |")
-            
-            report.append("")
-            
-            # Statistics
-            report.append("## Data Statistics\n")
-            
-            # Price stats
-            prices = []
-            for p in all_products:
-                price_str = p.get('price', '£0')
-                try:
-                    price_num = float(price_str.replace('£', '').replace('$', '').replace(',', ''))
-                    prices.append(price_num)
-                except:
-                    pass
-            
-            if prices:
-                report.append("### Price Analysis")
-                report.append(f"- **Minimum Price**: £{min(prices):.2f}")
-                report.append(f"- **Maximum Price**: £{max(prices):.2f}")
-                report.append(f"- **Average Price**: £{sum(prices)/len(prices):.2f}")
-                report.append(f"- **Total Value**: £{sum(prices):.2f}")
-                report.append("")
-            
-            # Rating stats
-            ratings = [p.get('rating_numeric', 0) for p in all_products if 'rating_numeric' in p]
-            if ratings:
-                report.append("### Rating Distribution")
-                for star in [5, 4, 3, 2, 1]:
-                    count = ratings.count(star)
-                    if count > 0:
-                        percentage = (count / len(ratings)) * 100
-                        bar = '█' * int(percentage / 5)
-                        report.append(f"- **{star}★**: {count} products ({percentage:.1f}%) {bar}")
-                report.append(f"- **Average Rating**: {sum(ratings)/len(ratings):.2f}★")
-                report.append("")
-        
-        # Detailed product info
-        if all_products:
-            report.append("## Detailed Product Data\n")
-            for i, product in enumerate(all_products[:20], 1):  # First 20 products
-                report.append(f"### Product {i}: {product.get('title', 'N/A')}\n")
-                report.append("```json")
-                # Remove source_url for cleaner display
-                display_product = {k: v for k, v in product.items() if k != 'source_url'}
-                report.append(json.dumps(display_product, indent=2, ensure_ascii=False))
-                report.append("```\n")
-        
-        # Categories
-        if all_categories:
-            report.append("## Categories Found\n")
-            for cat in sorted(all_categories)[:30]:
-                report.append(f"- {cat}")
-            report.append("")
-        
-        # Save report
-        report_filename = json_file.replace('.json', '_data_report.md')
-        with open(report_filename, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(report))
-        
-        print(f"\nData report saved to: {report_filename}")
-        return report_filename
-    
-    async def analyze_scraped_content(self, json_file: str) -> str:
-        """
-        Use Ollama to analyze the scraped content and generate a human-readable report.
-        
-        Args:
-            json_file: Path to the JSON file with scraped data
-            
-        Returns:
-            Path to the analysis report file
-        """
-        print("\n" + "=" * 80)
-        print("ANALYZING SCRAPED CONTENT WITH AI")
-        print("=" * 80)
-        
-        # Load the scraped data
-        with open(json_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        analysis_report = []
-        analysis_report.append("# Web Crawling Analysis Report")
-        analysis_report.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        analysis_report.append(f"\nTotal Pages Crawled: {data['crawl_summary']['total_pages']}")
-        analysis_report.append("\n" + "=" * 80 + "\n")
-        
-        # Analyze overall content
-        print("Generating overall summary...")
-        all_titles = [page['title'] for page in data['pages']]
-        all_descriptions = [page.get('description', '') for page in data['pages'] if page.get('description')]
-        
-        overall_prompt = f"""Analyze this website crawl data and provide a comprehensive summary.
-
-Total pages crawled: {len(data['pages'])}
-
-Page titles:
-{chr(10).join(all_titles[:20])}
-
-Descriptions:
-{chr(10).join(all_descriptions[:10])}
-
-Provide:
-1. What type of website is this?
-2. Main topics and themes covered
-3. Overall structure and organization
-4. Key sections identified
-5. Target audience
-
-Keep your response concise but informative."""
-        
-        try:
-            overall_response = ollama.generate(
-                model=self.ollama_model,
-                prompt=overall_prompt
-            )
-            
-            analysis_report.append("## Overall Website Summary\n")
-            analysis_report.append(overall_response['response'])
-            analysis_report.append("\n\n" + "=" * 80 + "\n")
-            
-        except Exception as e:
-            print(f"Error generating overall summary: {e}")
-            analysis_report.append("## Overall Website Summary\n")
-            analysis_report.append(f"Error generating summary: {e}\n\n")
-        
-        # Analyze individual pages
-        analysis_report.append("## Individual Page Analysis\n")
-        
-        for i, page in enumerate(data['pages'][:10]):  # Analyze first 10 pages in detail
-            print(f"Analyzing page {i+1}/{min(10, len(data['pages']))}: {page['url']}")
-            
-            page_prompt = f"""Analyze this web page and provide a detailed breakdown in human-readable format.
-
-URL: {page['url']}
-Title: {page['title']}
-Description: {page.get('description', 'N/A')}
-
-Content excerpt:
-{page.get('markdown_content', page.get('html_content', ''))[:1000]}
-
-Provide:
-1. Page purpose and main topic
-2. Key information presented
-3. Important elements or features
-4. Relationship to overall site structure
-
-Be specific and detailed."""
-            
-            try:
-                page_response = ollama.generate(
-                    model=self.ollama_model,
-                    prompt=page_prompt
-                )
-                
-                analysis_report.append(f"\n### Page {i+1}: {page['title']}\n")
-                analysis_report.append(f"**URL:** {page['url']}\n")
-                analysis_report.append(f"\n{page_response['response']}\n")
-                analysis_report.append("\n" + "-" * 80 + "\n")
-                
-            except Exception as e:
-                print(f"Error analyzing page {i+1}: {e}")
-                analysis_report.append(f"\n### Page {i+1}: {page['title']}\n")
-                analysis_report.append(f"Error analyzing page: {e}\n\n")
-        
-        # Save analysis report
-        report_filename = json_file.replace('.json', '_analysis.md')
-        with open(report_filename, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(analysis_report))
-        
-        print(f"\nAnalysis report saved to: {report_filename}")
-        return report_filename
 
 
 async def main():
-    """Main execution function."""
+    """Main execution function with user objective input."""
     print("=" * 80)
-    print("AGENTIC WEB CRAWLER WITH AI NAVIGATION")
+    print("🤖 IMPROVED AGENTIC WEB CRAWLER")
+    print("Schema-less AI-Powered Intelligent Crawling")
     print("=" * 80)
     print()
     
-    # Check if deepseek model is appropriate
-    print("NOTE: This crawler uses deepseek-r1:14b which requires ~8.7GB RAM")
-    print("If you experience memory errors, consider using a smaller model like:")
-    print("  - qwen2.5:3b (requires ~2GB RAM)")
-    print("  - llama3.2:3b (requires ~2GB RAM)")
-    print("  - mistral:7b (requires ~4GB RAM)")
-    print("Edit config.py to change the model.\n")
+    # Model info
+    print("ℹ️  This crawler uses deepseek-r1:14b (requires ~8.7GB RAM)")
+    print("   For lower memory: edit decision_model parameter to use qwen2.5:7b or tinyllama")
+    print()
     
-    # Get user input
-    start_url = input("Enter the website URL to crawl: ").strip()
+    # Get user inputs
+    start_url = input("🌐 Enter the website URL to crawl: ").strip()
     
     if not start_url.startswith(('http://', 'https://')):
         start_url = 'https://' + start_url
     
-    max_pages_input = input("Enter maximum number of pages to crawl (default: 50): ").strip()
+    print()
+    print("📝 What information are you looking for?")
+    print("   Examples:")
+    print("   - 'Product names, prices, and availability'")
+    print("   - 'Blog articles with titles and publication dates'")
+    print("   - 'Documentation pages with code examples'")
+    print("   - 'Contact information and team member details'")
+    print()
+    crawl_objective = input("Your objective: ").strip()
+    
+    if not crawl_objective:
+        crawl_objective = "Extract all relevant content and structured data"
+    
+    print()
+    max_pages_input = input("🔢 Maximum pages to crawl (default: 50): ").strip()
     max_pages = int(max_pages_input) if max_pages_input.isdigit() else 50
     
     # Initialize crawler
-    crawler = AgenticWebCrawler(
-        ollama_model="deepseek-r1:14b",
+    crawler = ImprovedAgenticWebCrawler(
+        decision_model="deepseek-r1:14b",
+        extraction_model="deepseek-r1:14b",
         max_pages=max_pages
     )
     
+    # Set objective
+    crawler.crawl_objective = crawl_objective
+    
+    # Analyze objective with AI
+    await crawler.analyze_user_objective(crawl_objective)
+    
     # Start crawling
-    print("\nStarting crawl...\n")
     scraped_data = await crawler.crawl_website(start_url)
     
     # Save data
     json_file = crawler.save_to_json()
     
-    print(f"\n✓ Successfully crawled {len(scraped_data)} pages")
-    
-    # Check if any products were extracted
-    total_products = sum(len(page.get('structured_data', {}).get('products', [])) for page in scraped_data)
-    
-    if total_products > 0:
-        print(f"✓ Extracted {total_products} products from the pages")
+    print(f"\n✅ Successfully crawled {len(scraped_data)} pages")
+    print(f"   High-value pages: {len(crawler.high_value_pages)}")
+    print(f"   Average relevance: {sum(crawler.page_relevance_scores.values())/len(crawler.page_relevance_scores):.1f}/10")
     
     # Generate human-readable report
-    generate_report = input("\nGenerate human-readable analysis report? (y/n): ").strip().lower()
+    generate_report = input("\n📊 Generate human-readable analysis report? (y/n): ").strip().lower()
     
     if generate_report == 'y':
         analysis_file = json_file.replace('.json', '_analysis.md')
         json_to_markdown_complete(json_file, analysis_file)
-        print(f"\n✓ Analysis complete! Check {analysis_file}")
+        print(f"\n✓ Report saved to: {analysis_file}")
     
     print("\n" + "=" * 80)
-    print("CRAWLING COMPLETE!")
+    print("🎉 CRAWLING COMPLETE!")
     print("=" * 80)
 
 

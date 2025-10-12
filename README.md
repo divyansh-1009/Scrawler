@@ -1,634 +1,973 @@
 # Agentic AI Web Crawler
 
-An intelligent, AI-powered web crawler that uses **deepseek-r1:14b** through Ollama to make smart navigation decisions while systematically crawling websites. The crawler extracts structured data, generates human-readable analysis reports, and preserves every detail in natural language format.
+A truly schema-less, intelligent web crawler powered by AI that adapts to any website and extracts information based on your specific objectives.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [How It Works](#how-it-works)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Architecture](#architecture)
+- [Code Structure](#code-structure)
+- [Configuration](#configuration)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
-## 🌟 Features
+## Overview
 
-### Core Capabilities
-- 🤖 **AI-Powered Navigation**: Uses deepseek-r1:14b model to intelligently select which links to crawl
-- � **Structured Data Extraction**: Automatically identifies and extracts products, prices, ratings, categories
-- 📊 **Smart Link Filtering**: Excludes images, CSS, JS, and other non-content files
-- 🔄 **Async Architecture**: Fast, efficient crawling using async/await patterns
-- 📝 **Natural Language Reports**: Converts all scraped data to flowing paragraphs
-- � **Complete Data Preservation**: Every detail saved in both JSON and human-readable formats
+This crawler uses Large Language Models (LLMs) to intelligently navigate and extract data from websites without requiring hardcoded patterns or specific HTML structures. It's **completely schema-less** and works on any type of website.
 
-### Data Extraction
-- **E-commerce Products**: Title, price, rating, availability, images
-- **Categories & Navigation**: Complete site taxonomy and structure
-- **Content**: Full HTML and Markdown content preservation
-- **Metadata**: Timestamps, URLs, page titles, descriptions
-- **Links**: All hyperlinks with domain filtering
+### What Makes It Different?
 
-### Output Formats
-1. **JSON** (`scraped_data.json`): Complete structured data
-2. **Markdown** (`scraped_data_analysis.md`): Natural language narrative report with:
-   - Executive summary
-   - Page-by-page detailed analysis
-   - Product descriptions in flowing paragraphs
-   - Statistical analysis
-   - Complete raw JSON backup
+**Traditional Web Scrapers:**
+- Require hardcoded CSS selectors or XPath patterns
+- Break when website structure changes
+- Only work on specific site types
+- Manual effort for each new website
+
+**This Agentic Crawler:**
+- ✅ No hardcoded patterns needed
+- ✅ Works on ANY website structure
+- ✅ Adapts to your specific objectives
+- ✅ Learns and improves during crawling
+- ✅ Intelligent navigation decisions
+- ✅ Universal applicability
 
 ---
 
-## 📋 Prerequisites
+## Key Features
 
-### System Requirements
-- **RAM**: Minimum 9GB (deepseek-r1:14b requires ~8.7GB)
-- **Python**: 3.8 or higher
-- **OS**: Windows, macOS, or Linux
+### 🎯 **Goal-Oriented Crawling**
+- Tell it what information you want
+- AI analyzes your objective and plans the crawl
+- Focuses only on relevant content
+- Adapts extraction strategy to your needs
 
-### Required Software
+### 🧠 **Schema-Less AI Extraction**
+- No hardcoded BeautifulSoup patterns
+- AI understands page content dynamically
+- Adapts to any website structure
+- Flexible data extraction
+
+### 📊 **Two-Phase Intelligent Crawling**
+
+**Phase 1: Reconnaissance (10% of pages)**
+- Explores site to understand structure
+- Identifies page types and patterns
+- Learns high-value URL patterns
+- Scores pages by relevance
+
+**Phase 2: Targeted Deep Crawl (90% of pages)**
+- Focuses on high-relevance sections
+- Uses learned patterns to prioritize
+- Avoids low-value pages
+- Maximizes data quality
+
+### 🔄 **Learning System**
+- Learns URL patterns during crawl
+- Recognizes valuable page types
+- Improves decisions based on findings
+- Self-optimizing within session
+
+### 🚀 **Smart Navigation**
+- Pre-scores URLs before crawling
+- Context-aware link selection
+- Balances exploration vs exploitation
+- AI-guided navigation decisions
+
+---
+
+## How It Works
+
+### **High-Level Process**
+
+```
+1. User Input
+   ├─ Website URL
+   ├─ Crawl Objective (what to extract)
+   └─ Max Pages
+
+2. AI Analyzes Objective
+   ├─ Identifies data types to extract
+   ├─ Plans extraction strategy
+   └─ Determines URL patterns to seek/avoid
+
+3. Phase 1: Reconnaissance
+   ├─ Crawls 10% of page budget
+   ├─ AI extracts content (no patterns!)
+   ├─ Learns valuable URL patterns
+   └─ Identifies page types
+
+4. AI Analyzes Site Structure
+   ├─ Determines site type
+   ├─ Identifies high-value sections
+   └─ Plans targeted strategy
+
+5. Phase 2: Targeted Crawl
+   ├─ Focuses on high-value areas
+   ├─ Pre-scores URLs by relevance
+   ├─ AI navigates intelligently
+   └─ Continuous learning
+
+6. Output
+   ├─ scraped_data.json (extracted data)
+   └─ scraped_data_analysis.md (human-readable report)
+```
+
+### **Detailed Flow**
+
+#### **1. Objective Analysis**
+When you provide an objective like "Product names, prices, and ratings", the AI:
+- Identifies data types: `["products", "e-commerce items"]`
+- Key fields to extract: `["name", "price", "rating", "availability"]`
+- Valuable sections: `["product listings", "category pages"]`
+- URL patterns to seek: `["/products/", "/catalogue/"]`
+- URL patterns to avoid: `["/login", "/cart", "/checkout"]`
+
+#### **2. AI-Powered Content Extraction**
+For each page, the AI:
+1. Removes noise (nav, footer, scripts)
+2. Extracts main content and structure
+3. Analyzes based on your objective
+4. Returns:
+   - Page type (e.g., "product_listing", "article", "documentation")
+   - Relevance score (0-10)
+   - Extracted data in flexible schema
+   - Reasoning for relevance
+
+#### **3. Intelligent Link Selection**
+For each page's links, the system:
+1. **Extracts with context**: anchor text, surrounding content, link position
+2. **Pre-scores**: Uses heuristics and learned patterns
+3. **AI decides**: Selects 3-5 best URLs to crawl next
+4. **Considers**: Progress, learned patterns, exploration vs depth
+
+#### **4. Learning System**
+Throughout the crawl:
+- Tracks relevance scores for all pages
+- Identifies high-value URL patterns (e.g., `/products/*`)
+- Remembers which page types are valuable
+- Uses this knowledge for future decisions
+
+---
+
+## Installation
+
+### **Prerequisites**
+
 1. **Python 3.8+**
 2. **Ollama** with deepseek-r1:14b model
 
----
+### **Setup Steps**
 
-## 🚀 Installation
+1. **Clone or download this repository**
 
-### Step 1: Install Ollama and Model
-
-1. Download and install Ollama from [ollama.ai](https://ollama.ai/)
-
-2. Pull the deepseek-r1:14b model:
-   ```bash
-   ollama pull deepseek-r1:14b
-   ```
-
-3. Verify installation:
-   ```bash
-   ollama list
-   ```
-   You should see `deepseek-r1:14b` in the list.
-
-### Step 2: Set Up Python Environment
-
-1. **Clone or navigate to the project directory**
-
-2. **Create virtual environment**:
-   ```powershell
-   # Windows PowerShell
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-   ```
-   
-   ```bash
-   # Linux/Mac
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-### Step 3: Verify Installation
-
-Run the setup check:
+2. **Install Python dependencies:**
 ```bash
-python -c "import main; print('✓ Installation successful!')"
+pip install -r requirements.txt
+```
+
+3. **Install Ollama:**
+   - Download from: https://ollama.ai
+   - Install for your operating system
+
+4. **Pull the AI model:**
+```bash
+ollama pull deepseek-r1:14b
+```
+
+### **Dependencies** (in requirements.txt)
+
+```
+crawl4ai>=0.3.0
+ollama>=0.1.0
+asyncio
+aiohttp>=3.9.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
 ```
 
 ---
 
-## 💻 Usage
+## Usage
 
-### Basic Usage
+### **Basic Usage**
 
-1. **Activate virtual environment**:
-   ```powershell
-   .\venv\Scripts\Activate.ps1  # Windows
-   # or
-   source venv/bin/activate      # Linux/Mac
-   ```
-
-2. **Run the crawler**:
-   ```bash
-   python main.py
-   ```
-
-3. **Follow the prompts**:
-   ```
-   Enter the website URL to crawl: https://example.com
-   Enter maximum number of pages to crawl (default: 50): 20
-   ```
-
-4. **Wait for crawling to complete**
-
-5. **Generate analysis report** (when prompted):
-   ```
-   Generate human-readable analysis report? (y/n): y
-   ```
-
-### Output Files
-
-After crawling, you'll have:
-- **`scraped_data.json`**: Complete structured data
-- **`scraped_data_analysis.md`**: Human-readable report (if generated)
-
----
-
-## 📁 Project Structure
-
-```
-f:\Latest crawler\
-├── venv/                      # Virtual environment
-├── config.py                  # Configuration settings
-├── main.py                    # Main crawler application
-├── convert_to_markdown.py     # JSON to Markdown converter
-├── requirements.txt           # Python dependencies
-├── README.md                  # This file
-├── .gitignore                # Git ignore rules
-├── scraped_data.json         # Generated: Raw crawl data
-└── scraped_data_analysis.md  # Generated: Human-readable report
+```bash
+python main.py
 ```
 
----
+### **Interactive Prompts**
 
-## ⚙️ Configuration
-
-Edit `config.py` to customize crawler behavior:
-
-```python
-# AI Model
-OLLAMA_MODEL = "deepseek-r1:14b"
-OLLAMA_TIMEOUT = 60  # seconds
-
-# Crawler Settings
-DEFAULT_MAX_PAGES = 50
-MAX_LINKS_PER_PAGE = 20
-MAX_LINKS_TO_SELECT = 5
-
-# Content Storage
-HTML_CONTENT_LIMIT = 5000
-MARKDOWN_CONTENT_LIMIT = 5000
-
-# Output Files
-DEFAULT_JSON_OUTPUT = "scraped_data.json"
-DEFAULT_ANALYSIS_OUTPUT = "scraped_data_analysis.md"
-
-# Behavior
-BYPASS_CACHE = True
-VERBOSE_MODE = True
-SAME_DOMAIN_ONLY = True
+**1. Enter Website URL:**
+```
+🌐 Enter the website URL to crawl: https://books.toscrape.com
 ```
 
----
-
-## 🔧 How It Works
-
-### Crawling Process
-
-1. **Initialization**
-   - User provides starting URL and max pages
-   - Crawler extracts base domain for filtering
-   - Queue initialized with start URL
-
-2. **Page Crawling**
-   ```
-   For each URL in queue:
-   ├── Fetch page using Crawl4AI
-   ├── Extract HTML and Markdown content
-   ├── Parse structured data (products, categories)
-   ├── Extract all links from page
-   ├── Filter out images, CSS, JS, etc.
-   ├── Send filtered links to AI
-   └── AI selects top 5 relevant links
-   ```
-
-3. **AI Navigation Decision**
-   - AI analyzes current page context
-   - Evaluates available links
-   - Selects most relevant content pages
-   - Avoids login pages, carts, social media
-
-4. **Data Extraction**
-   - **Products**: Uses BeautifulSoup with CSS selectors
-     - `article.product_pod` → Product containers
-     - `h3 > a` → Product titles and URLs
-     - `p.price_color` → Prices
-     - `p.star-rating` → Ratings
-     - `p.instock.availability` → Stock status
-     - `img` → Product images
-   
-   - **Categories**: Extracts from navigation menus
-     - Searches `<nav>`, `<aside>`, category divs
-     - Limits to 30 unique categories
-   
-   - **Content**: Full HTML and Markdown preservation
-
-5. **Queue Management**
-   - Adds AI-selected links to queue
-   - Tracks visited URLs to avoid duplicates
-   - Continues until max_pages or queue empty
-   - **No fallback**: If AI fails, link selection is skipped
-
-6. **Output Generation**
-   - Saves JSON with complete structured data
-   - Optionally generates natural language report
-   - Every detail preserved in narrative format
-
-### Link Filtering
-
-Automatically excludes:
+**2. Describe Your Objective:**
 ```
-✗ Images: .jpg, .jpeg, .png, .gif, .svg, .ico, .webp
-✗ Styles/Scripts: .css, .js, .woff, .ttf, .eot
-✗ Documents: .pdf, .zip, .tar, .gz, .rar, .exe
-✗ Media: .mp4, .mp3, .avi, .mov, .wav
-✗ Auth pages: login, signin, signup, register, logout
-✗ E-commerce: cart, checkout, wishlist, account
-✗ Social: facebook.com, twitter.com, instagram.com, etc.
-✗ Special: mailto:, tel:, javascript:
+📝 What information are you looking for?
+   Examples:
+   - 'Product names, prices, and availability'
+   - 'Blog articles with titles and publication dates'
+   - 'Documentation pages with code examples'
+   - 'Contact information and team member details'
+
+Your objective: Product names, prices, and ratings
 ```
 
----
+**3. Set Page Limit:**
+```
+🔢 Maximum pages to crawl (default: 50): 20
+```
 
-## 📊 Data Structure
+### **What Happens Next**
 
-### JSON Output Schema
+1. **AI analyzes your objective** (~10-30 seconds)
+2. **Phase 1: Reconnaissance** (2-5 pages)
+3. **AI analyzes site structure** (~10-20 seconds)
+4. **Phase 2: Targeted crawl** (remaining pages)
+5. **Saves data** to `scraped_data.json`
+6. **Optionally generates** human-readable report
 
+### **Output Files**
+
+#### **scraped_data.json**
+Clean JSON with only extracted data:
 ```json
 {
-  "crawl_summary": {
-    "total_pages": 10,
-    "urls_visited": ["url1", "url2", ...],
-    "timestamp": "2025-10-10T05:41:03.580181"
-  },
-  "pages": [
+  "objective": "Product names, prices, and ratings",
+  "extracted_data": [
     {
-      "url": "https://example.com/page",
-      "title": "Page Title",
-      "description": "Meta description",
-      "html_content": "<html>...</html>",
-      "markdown_content": "# Converted markdown...",
-      "links_found": 73,
-      "timestamp": "2025-10-10T05:41:01.363554",
-      "metadata": {
-        "title": "Page Title",
-        "description": "...",
-        "keywords": null,
-        "author": null
+      "url": "https://example.com/products",
+      "extracted_content": {
+        "items": [
+          {
+            "name": "Product Name",
+            "price": "$29.99",
+            "rating": "4.5/5"
+          }
+        ]
       },
-      "structured_data": {
-        "products": [
-          {
-            "title": "Product Name",
-            "url": "/product-url",
-            "price": "£29.99",
-            "availability": "In stock",
-            "rating": "Five",
-            "rating_numeric": 5,
-            "image": "/path/to/image.jpg",
-            "image_alt": "Product description"
-          }
-        ],
-        "categories": [
-          {
-            "name": "Category Name",
-            "url": "/category/url"
-          }
-        ],
-        "page_type": "product_listing"
-      }
+      "relevance": 9
     }
   ]
 }
 ```
 
-### Markdown Report Structure
+#### **scraped_data_analysis.md** (optional)
+Human-readable report with all extracted data formatted nicely:
+```markdown
+# Extracted Data Analysis Report
 
-1. **Executive Summary**
-   - Crawl session overview
-   - Total pages and URLs
-   - Timestamp information
+**Search Objective**: Product names, prices, and ratings
 
-2. **Detailed Page Analysis**
-   - For each page:
-     - Location and basic info (paragraphs)
-     - Product descriptions (flowing text)
-     - Category explanations (sentences)
-     - Content analysis (word counts, excerpts)
-     - Full content (collapsible)
-     - Raw HTML (collapsible)
+## Summary
+Found 12 pages with relevant information.
 
-3. **Statistical Analysis**
-   - Product inventory summary
-   - Price analysis (min, max, average, total value)
-   - Rating distribution
-   - Availability status
-   - Category taxonomy
-   - Link discovery metrics
-   - Data volume statistics
+## Source 1
+**Relevance Score**: 9/10
 
-4. **Raw JSON Backup**
-   - Complete JSON embedded in markdown
-   - Collapsible for reference
+### Items
+### Item 1
+**Name**: Product Name
+**Price**: $29.99
+**Rating**: 4.5/5
+
+**Source URL**: https://example.com/products
+```
 
 ---
 
-## 🎯 Use Cases
+## Architecture
 
-### E-commerce Product Research
-```bash
-python main.py
-# Enter: https://books.toscrape.com/catalogue/category/books/fantasy_19/
-# Max pages: 10
-```
-**Result**: Complete product catalog with prices, ratings, availability
+### **Core Components**
 
-### News Article Collection
-```bash
-python main.py
-# Enter: https://www.aljazeera.com/
-# Max pages: 20
-```
-**Result**: Article titles, content, categories, publication data
+#### **1. ImprovedAgenticWebCrawler Class**
 
-### Website Structure Analysis
-```bash
-python main.py
-# Enter: https://example.com/
-# Max pages: 50
-```
-**Result**: Complete site map, navigation structure, category taxonomy
+Main crawler class that orchestrates the entire process.
 
-### Content Aggregation
-- Blog posts
-- Documentation pages
-- Directory listings
-- Category pages
-- Search results
+**Key Attributes:**
+- `crawl_objective`: User's search objective
+- `crawl_objective_analysis`: AI's understanding of objective
+- `site_understanding`: Learned patterns and site structure
+- `page_relevance_scores`: Relevance tracking for all pages
+- `high_value_pages`: List of most valuable pages found
+
+**Key Methods:**
+
+##### **analyze_user_objective(objective: str)**
+- Uses AI to understand what user wants
+- Returns: data types, key fields, URL patterns, strategy
+
+##### **_extract_content_with_ai(html: str, url: str, markdown: str)**
+- Schema-less AI extraction
+- Adapts to page structure dynamically
+- Returns: page type, relevance, extracted content
+
+##### **_extract_links_with_context(html: str, base_url: str)**
+- Extracts links with rich context
+- Returns: URL, anchor text, surrounding context, position info
+
+##### **_score_url_relevance(link_info: Dict)**
+- Pre-scores URLs before crawling
+- Uses: learned patterns, historical data, heuristics
+
+##### **_ask_ollama_for_navigation_advanced(...)**
+- AI navigation decisions
+- Considers: pre-scores, progress, learned patterns
+- Returns: 3-5 best URLs to crawl
+
+##### **_crawl_page(url: str, crawler: AsyncWebCrawler)**
+- Crawls single page
+- Extracts content with AI
+- Returns: page data with AI extraction results
+
+##### **_analyze_site_structure()**
+- Analyzes reconnaissance results
+- Identifies: site type, valuable sections, strategy
+
+##### **crawl_website(start_url: str)**
+- Main orchestration method
+- Implements two-phase crawling
+- Returns: all scraped data
+
+##### **save_to_json(filename: str)**
+- Saves only extracted relevant data
+- Filters by relevance (≥ 5/10)
+- Clean, focused output
+
+#### **2. convert_to_markdown.py**
+
+Converts JSON to human-readable report.
+
+##### **json_to_markdown_complete(json_file: str, output_file: str)**
+- Reads scraped_data.json
+- Formats all extracted data
+- Outputs comprehensive markdown report
+- Focuses only on extracted information (no metadata)
+
+##### **_format_content(content: Any, level: int)**
+- Recursively formats nested data
+- Handles: dicts, lists, primitives
+- Creates readable markdown structure
 
 ---
 
-## 🛠️ Advanced Usage
+## Code Structure
 
-### Convert Existing JSON to Markdown
+### **File Organization**
 
-If you already have a `scraped_data.json` file:
-
-```bash
-python convert_to_markdown.py scraped_data.json output.md
+```
+Latest crawler/
+├── main.py                    # Main crawler implementation
+├── convert_to_markdown.py     # Report generation
+├── requirements.txt           # Python dependencies
+├── README.md                  # This file
+├── scraped_data.json          # Output: Extracted data (generated)
+└── scraped_data_analysis.md   # Output: Human-readable report (generated)
 ```
 
-Or with custom names:
-```bash
-python convert_to_markdown.py my_data.json my_report.md
-```
-
-### Programmatic Usage
+### **main.py Structure** (~870 lines)
 
 ```python
-import asyncio
-from main import AgenticWebCrawler
-from convert_to_markdown import json_to_markdown_complete
+# Imports (lines 1-24)
+# - asyncio, json, os, re, datetime
+# - ollama, crawl4ai, BeautifulSoup
 
-async def crawl_site():
-    # Initialize crawler
-    crawler = AgenticWebCrawler(
-        ollama_model="deepseek-r1:14b",
-        max_pages=20
-    )
+# ImprovedAgenticWebCrawler Class (lines 27-814)
+class ImprovedAgenticWebCrawler:
+    # Initialization (lines 32-70)
+    def __init__(...)
     
-    # Crawl website
-    data = await crawler.crawl_website("https://example.com")
+    # Objective Analysis (lines 72-150)
+    async def analyze_user_objective(...)
     
-    # Save to JSON
-    json_file = crawler.save_to_json("my_crawl.json")
+    # Helper Methods (lines 152-188)
+    def _is_same_domain(...)
+    def _extract_url_pattern(...)
+    def _find_similar_visited_urls(...)
     
-    # Generate markdown report
-    json_to_markdown_complete(json_file, "my_report.md")
+    # AI Content Extraction (lines 190-303)
+    async def _extract_content_with_ai(...)
     
-    return data
+    # Learning System (lines 305-327)
+    def _update_site_knowledge(...)
+    
+    # URL Management (lines 329-392)
+    def _normalize_url(...)
+    async def _extract_links_with_context(...)
+    
+    # URL Scoring (lines 394-429)
+    async def _score_url_relevance(...)
+    
+    # AI Navigation (lines 431-517)
+    async def _ask_ollama_for_navigation_advanced(...)
+    
+    # Page Crawling (lines 519-576)
+    async def _crawl_page(...)
+    
+    # Site Analysis (lines 578-653)
+    async def _analyze_site_structure(...)
+    
+    # Main Crawl Logic (lines 655-790)
+    async def crawl_website(...)
+    
+    # Data Saving (lines 792-814)
+    def save_to_json(...)
 
-# Run
-asyncio.run(crawl_site())
+# Main Function (lines 817-882)
+async def main():
+    # User interaction
+    # Crawler initialization
+    # Execution
+    # Report generation
+
+# Entry Point (lines 885-886)
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### **Key Design Patterns**
+
+#### **1. Two-Phase Strategy Pattern**
+```python
+# Phase 1: Explore
+reconnaissance_phase()
+analyze_findings()
+
+# Phase 2: Exploit
+targeted_deep_crawl()
+```
+
+#### **2. Learning System Pattern**
+```python
+# Learn from each page
+extract_content() → score_relevance() → update_knowledge()
+
+# Apply learned knowledge
+score_new_url() → use_learned_patterns()
+```
+
+#### **3. AI Decision Making Pattern**
+```python
+# Gather context
+context = collect_all_relevant_info()
+
+# AI decides
+decision = ai_analyze(context, objective)
+
+# Execute decision
+take_action(decision)
 ```
 
 ---
 
-## ⚠️ Important Notes
+## Configuration
 
-### Memory Requirements
-- **deepseek-r1:14b requires ~8.7GB RAM**
-- Ensure your system has at least **10GB total RAM**
-- If you experience memory errors:
-  - Close other applications
-  - Reduce max_pages
-  - Consider using a smaller model (edit config.py)
+### **Changing AI Models**
 
-### AI Behavior
-- **No fallback logic**: If AI fails due to memory, link selection is skipped for that page
-- Crawler continues with remaining URLs in queue
-- Link filtering prevents crawling static assets even if AI unavailable
+Edit lines 852-855 in `main.py`:
 
-### Rate Limiting
-- Be respectful of target websites
-- Implement delays if needed (modify crawler)
-- Check robots.txt compliance
-- Consider Terms of Service
+**For Speed (Lower Quality):**
+```python
+crawler = ImprovedAgenticWebCrawler(
+    decision_model="tinyllama:latest",
+    extraction_model="tinyllama:latest",
+    max_pages=max_pages
+)
+```
 
-### Legal Considerations
-- Ensure you have permission to crawl target sites
-- Respect robots.txt directives
-- Don't overload servers
-- Use scraped data responsibly
+**For Balance:**
+```python
+crawler = ImprovedAgenticWebCrawler(
+    decision_model="qwen2.5:7b",
+    extraction_model="qwen2.5:7b",
+    max_pages=max_pages
+)
+```
+
+**For Best Quality (Current):**
+```python
+crawler = ImprovedAgenticWebCrawler(
+    decision_model="deepseek-r1:14b",
+    extraction_model="deepseek-r1:14b",
+    max_pages=max_pages
+)
+```
+
+**Mixed Approach (Recommended for 8GB+ RAM):**
+```python
+crawler = ImprovedAgenticWebCrawler(
+    decision_model="qwen2.5:7b",        # Strategic decisions
+    extraction_model="tinyllama:latest", # Fast extraction
+    max_pages=max_pages
+)
+```
+
+### **Model Comparison**
+
+| Model | Size | Speed | Quality | RAM | Best For |
+|-------|------|-------|---------|-----|----------|
+| tinyllama:latest | 637MB | Very Fast | Good | 2GB | Testing, low-spec hardware |
+| qwen2.5:7b | 4.7GB | Moderate | Excellent | 6GB | Production, balanced |
+| deepseek-r1:14b | 8.7GB | Slow | Excellent | 10GB | Complex extraction, reasoning |
+
+### **Adjusting Crawl Parameters**
+
+#### **Reconnaissance Budget** (line 680)
+```python
+# Current: 10% of pages
+recon_budget = max(5, self.max_pages // 10)
+
+# More thorough (slower): 15%
+recon_budget = max(5, self.max_pages // 7)
+
+# Faster (less thorough): 5%
+recon_budget = max(3, self.max_pages // 20)
+```
+
+#### **Relevance Threshold** (line 799)
+```python
+# Current: Include pages with relevance ≥ 5
+if page.get('relevance_score', 0) >= 5:
+
+# More strict: Only high-relevance pages
+if page.get('relevance_score', 0) >= 7:
+
+# More inclusive: Include more pages
+if page.get('relevance_score', 0) >= 3:
+```
+
+#### **Content Analysis Size** (line 213)
+```python
+# Current: 4000 characters
+content_to_analyze = markdown[:4000]
+
+# More context (slower)
+content_to_analyze = markdown[:6000]
+
+# Less context (faster)
+content_to_analyze = markdown[:2000]
+```
 
 ---
 
-## 🐛 Troubleshooting
+## Examples
 
-### Issue: "Model requires more system memory"
-**Solution**: 
-- Your system doesn't have enough RAM
+### **Example 1: E-Commerce Product Extraction**
+
+**Input:**
+```
+URL: https://books.toscrape.com
+Objective: Product names, prices, ratings, and availability
+Max Pages: 20
+```
+
+**Process:**
+1. AI identifies: e-commerce site, looking for product data
+2. Reconnaissance finds: product listings and category pages
+3. Learns pattern: `/catalogue/category/*` = high value
+4. Targeted crawl: Focuses on product pages
+5. Extracts: 40+ products with all requested fields
+
+**Output (scraped_data.json):**
+```json
+{
+  "objective": "Product names, prices, ratings, and availability",
+  "extracted_data": [
+    {
+      "url": "https://books.toscrape.com/catalogue/category/books_1/index.html",
+      "extracted_content": {
+        "items": [
+          {
+            "title": "A Light in the Attic",
+            "price": "£51.77",
+            "rating": "Three stars",
+            "availability": "In stock"
+          },
+          {
+            "title": "Tipping the Velvet",
+            "price": "£53.74",
+            "rating": "One star",
+            "availability": "In stock"
+          }
+        ]
+      },
+      "relevance": 9
+    }
+  ]
+}
+```
+
+### **Example 2: Blog Article Extraction**
+
+**Input:**
+```
+URL: https://blog.example.com
+Objective: Article titles, authors, publication dates, and summaries
+Max Pages: 15
+```
+
+**Process:**
+1. AI identifies: blog/news site, looking for article metadata
+2. Reconnaissance finds: article pages and archive listings
+3. Learns pattern: `/blog/2024/*` = high value
+4. Targeted crawl: Focuses on article pages
+5. Extracts: Metadata from all articles
+
+**Output Structure:**
+```json
+{
+  "objective": "Article titles, authors, dates, summaries",
+  "extracted_data": [
+    {
+      "url": "https://blog.example.com/article-1",
+      "extracted_content": {
+        "article": {
+          "title": "Understanding AI",
+          "author": "John Doe",
+          "date": "2024-01-15",
+          "summary": "An introduction to..."
+        }
+      },
+      "relevance": 8
+    }
+  ]
+}
+```
+
+### **Example 3: Documentation Extraction**
+
+**Input:**
+```
+URL: https://docs.example.com
+Objective: API endpoints with parameters and code examples
+Max Pages: 25
+```
+
+**Process:**
+1. AI identifies: documentation site, looking for API details
+2. Reconnaissance finds: API reference pages
+3. Learns pattern: `/api/reference/*` = high value
+4. Targeted crawl: Focuses on endpoint documentation
+5. Extracts: Endpoints, parameters, examples
+
+### **Example 4: Contact Information**
+
+**Input:**
+```
+URL: https://company.example.com
+Objective: Team member names, titles, and email addresses
+Max Pages: 10
+```
+
+**Process:**
+1. AI identifies: business site, looking for contact info
+2. Reconnaissance finds: about page, team page
+3. Learns pattern: `/about/*`, `/team/*` = high value
+4. Targeted crawl: Focuses on people pages
+5. Extracts: Contact information
+
+---
+
+## Troubleshooting
+
+### **Common Issues**
+
+#### **1. "Model not found" Error**
+
+**Problem:** Ollama model not installed
+
+**Solution:**
+```bash
+ollama pull deepseek-r1:14b
+```
+
+Verify installation:
+```bash
+ollama list
+```
+
+#### **2. Crawler Hangs on "Analyzing objective"**
+
+**Problem:** Model is slow or system is low on resources
+
+**Solutions:**
+- Switch to faster model (tinyllama)
 - Close other applications
-- Or edit `config.py` to use a smaller model like `qwen2.5:3b`
+- Increase available RAM
+- Wait longer (deepseek-r1 can take 30-60 seconds)
 
-### Issue: Crawler stops early (e.g., 4 pages instead of 20)
-**Possible Causes**: 
-- AI failed due to memory (now handled gracefully)
-- Queue exhausted (no auto-refill logic)
-- All same-domain URLs already visited
+#### **3. "JSON parsing error"**
 
-**Solution**:
-- Check terminal output for AI errors
-- Verify link filtering isn't too aggressive
-- Ensure starting URL has many internal links
+**Problem:** AI returned malformed JSON
 
-### Issue: No products extracted
-**Solution**:
-- The site may use different HTML structure
-- Check if products use `article.product_pod` class
-- Modify `_extract_structured_data()` in main.py for your site
+**Solution:** 
+- This is handled automatically with fallback extraction
+- Results are still useful
+- Consider using more reliable model (qwen2.5:7b)
 
-### Issue: "Ollama not responding"
-**Solution**:
+#### **4. No Data Extracted**
+
+**Problem:** Pages not matching objective or low relevance
+
+**Solutions:**
+- Make objective more specific
+- Try different URL
+- Increase page count
+- Lower relevance threshold in code (line 799)
+
+#### **5. Slow Crawling**
+
+**Problem:** Model taking long time per page
+
+**Solutions:**
+1. Use faster model:
+   ```python
+   decision_model="tinyllama:latest"
+   extraction_model="tinyllama:latest"
+   ```
+
+2. Reduce content size (line 213):
+   ```python
+   content_to_analyze = markdown[:2000]
+   ```
+
+3. Reduce page count:
+   ```
+   Max pages: 10
+   ```
+
+#### **6. Memory Errors**
+
+**Problem:** Not enough RAM for model
+
+**Solutions:**
+- Close other applications
+- Use smaller model (tinyllama or qwen2.5:3b)
+- Reduce max pages
+- Restart Ollama service
+
+#### **7. Connection Errors**
+
+**Problem:** Can't reach website
+
+**Solutions:**
+- Check internet connection
+- Verify URL is correct
+- Try different website
+- Check if site blocks scrapers (use robots.txt)
+
+### **Debugging Tips**
+
+#### **Enable Verbose Output**
+
+In `main.py`, line 686:
+```python
+async with AsyncWebCrawler(verbose=True) as crawler:
+```
+
+#### **Check Ollama Logs**
+
 ```bash
 # Check if Ollama is running
 ollama list
 
-# Restart Ollama
-# Windows: Restart the Ollama application
-# Linux/Mac: sudo systemctl restart ollama
+# Test model directly
+ollama run deepseek-r1:14b "Hello"
 ```
 
-### Issue: Import errors
-**Solution**:
-```bash
-# Ensure virtual environment is activated
-.\venv\Scripts\Activate.ps1  # Windows
-source venv/bin/activate      # Linux/Mac
+#### **Reduce Complexity**
 
-# Reinstall dependencies
-pip install -r requirements.txt --force-reinstall
+Start with small tests:
+```
+Max pages: 5
+Objective: Just product names
+```
+
+#### **Check Output Files**
+
+After crawl:
+1. Check `scraped_data.json` exists
+2. Verify it has `extracted_data` array
+3. Check relevance scores
+4. Review extracted content structure
+
+---
+
+## Technical Details
+
+### **AI Model Usage**
+
+#### **1. Objective Analysis**
+- **Input:** User's objective description
+- **Process:** AI parses intent and plans strategy
+- **Output:** Data types, key fields, URL patterns
+- **Frequency:** Once per crawl
+
+#### **2. Content Extraction**
+- **Input:** Page HTML/markdown + objective
+- **Process:** AI identifies relevant data
+- **Output:** Page type, relevance, structured content
+- **Frequency:** Once per page crawled
+
+#### **3. Site Structure Analysis**
+- **Input:** Reconnaissance results summary
+- **Process:** AI identifies site type and valuable sections
+- **Output:** Site type, valuable page types, strategy
+- **Frequency:** Once after reconnaissance
+
+#### **4. Navigation Decisions**
+- **Input:** Pre-scored URLs + crawl context
+- **Process:** AI selects best URLs to crawl
+- **Output:** 3-5 URLs to visit next
+- **Frequency:** After each page in deep crawl phase
+
+### **Performance Characteristics**
+
+**Time Estimates (deepseek-r1:14b on mid-range hardware):**
+- Objective analysis: 10-30 seconds
+- Page extraction: 15-30 seconds per page
+- Site analysis: 10-20 seconds
+- Navigation decision: 10-20 seconds
+
+**Total for 20 pages:** ~10-20 minutes
+
+**With tinyllama:latest:**
+- Objective analysis: 5-10 seconds
+- Page extraction: 3-5 seconds per page
+- Total for 20 pages: ~3-5 minutes
+
+### **Data Flow**
+
+```
+User Input
+    ↓
+Objective Analysis (AI) → Strategy
+    ↓
+Phase 1: Reconnaissance
+    ├→ Crawl Page → AI Extract → Update Knowledge
+    ├→ Crawl Page → AI Extract → Update Knowledge
+    └→ Crawl Page → AI Extract → Update Knowledge
+    ↓
+Site Analysis (AI) → Refined Strategy
+    ↓
+Phase 2: Targeted Crawl
+    ├→ Pre-score URLs → AI Select → Crawl → Extract
+    ├→ Pre-score URLs → AI Select → Crawl → Extract
+    └→ Pre-score URLs → AI Select → Crawl → Extract
+    ↓
+Save to JSON (filtered by relevance)
+    ↓
+Generate Report (optional)
 ```
 
 ---
 
-## 📚 Dependencies
+## Advanced Usage
 
-```
-crawl4ai >= 0.3.0      # Web crawling framework
-ollama >= 0.1.0        # AI model integration
-beautifulsoup4         # HTML parsing
-lxml                   # XML/HTML parser
-aiohttp                # Async HTTP client
-```
-
-Full list in `requirements.txt`
-
----
-
-## 🔄 Development
-
-### Adding Custom Extractors
-
-Edit `_extract_structured_data()` in `main.py`:
+### **Programmatic Usage**
 
 ```python
-def _extract_structured_data(self, html: str, url: str) -> Dict[str, Any]:
-    soup = BeautifulSoup(html, 'lxml')
-    structured_data = {
-        "products": [],
-        "categories": [],
-        "page_type": "unknown"
-    }
+import asyncio
+from main import ImprovedAgenticWebCrawler
+
+async def custom_crawl():
+    # Initialize crawler
+    crawler = ImprovedAgenticWebCrawler(
+        decision_model="deepseek-r1:14b",
+        extraction_model="deepseek-r1:14b",
+        max_pages=30
+    )
     
-    # Add your custom extraction logic here
-    custom_items = soup.find_all('div', class_='your-class')
-    for item in custom_items:
-        # Extract custom fields
-        pass
+    # Set objective
+    crawler.crawl_objective = "Product prices and descriptions"
     
-    return structured_data
+    # Analyze objective
+    await crawler.analyze_user_objective(crawler.crawl_objective)
+    
+    # Crawl
+    results = await crawler.crawl_website("https://example.com")
+    
+    # Save
+    json_file = crawler.save_to_json("my_data.json")
+    
+    # Access results directly
+    for page in results:
+        print(f"URL: {page['url']}")
+        print(f"Relevance: {page['relevance_score']}")
+        print(f"Content: {page['ai_extraction']['key_content']}")
+        print("---")
+
+# Run
+asyncio.run(custom_crawl())
 ```
 
-### Modifying AI Prompts
+### **Custom Processing**
 
-Edit prompts in `_ask_ollama_for_navigation()` or `config.py`
+```python
+# After crawling
+crawler = ImprovedAgenticWebCrawler(...)
+results = await crawler.crawl_website(url)
 
----
+# Filter by high relevance
+high_quality = [p for p in results if p['relevance_score'] >= 8]
 
-## 📝 Output Examples
+# Extract specific data type
+products = []
+for page in results:
+    content = page.get('ai_extraction', {}).get('key_content', {})
+    if 'items' in content:
+        products.extend(content['items'])
 
-### Console Output
-```
-================================================================================
-AGENTIC WEB CRAWLER WITH AI NAVIGATION
-================================================================================
-
-NOTE: This crawler uses deepseek-r1:14b which requires ~8.7GB RAM
-
-Enter the website URL to crawl: https://books.toscrape.com
-Enter maximum number of pages to crawl (default: 50): 10
-
-Starting crawl...
-
-Starting crawl of https://books.toscrape.com
-Using model: deepseek-r1:14b
-Max pages: 10
---------------------------------------------------------------------------------
-[FETCH]... ↓ https://books.toscrape.com
-| ✓ | ⏱: 2.87s
-[SCRAPE].. ◆ https://books.toscrape.com
-| ✓ | ⏱: 0.11s
-  → Found 30 categories
-AI selected 5 links to crawl
-Progress: 1/10 pages crawled
-Queue size: 5
---------------------------------------------------------------------------------
-...
-✓ Successfully crawled 10 pages
-✓ Extracted 120 products from the pages
-
-Generate human-readable analysis report? (y/n): y
-✓ Analysis complete! Check scraped_data_analysis.md
-```
-
-### Markdown Report Sample
-```markdown
-# Web Crawling Analysis Report - Complete Human-Readable Summary
-
-**Report Generated**: October 10, 2025 at 05:49 AM
-
-## Executive Summary
-
-This comprehensive analysis report documents the complete web crawling session 
-conducted on October 10, 2025 at 05:41 AM. During this crawling session, 
-the system successfully visited and extracted data from 10 web pages...
-
-## Detailed Page-by-Page Analysis
-
-### Page 1 - Complete Analysis
-
-**Location and Basic Information**: This page is located at 
-https://books.toscrape.com/catalogue/category/books/fantasy_19/index.html. 
-The page carries the title "Fantasy | Books to Scrape - Sandbox". The content 
-was extracted on October 10, 2025 at 05:41 AM...
-
-**Product 1: Unicorn Tracks**
-
-The 1st product discovered on this page is titled "Unicorn Tracks". This 
-product is currently priced at £18.78. According to the availability information 
-extracted from the page, this item is reported as "In stock"...
+# Custom analysis
+print(f"Total products found: {len(products)}")
 ```
 
 ---
 
-## 🤝 Contributing
+## License
 
-This is a personal project, but suggestions are welcome!
-
----
-
-## 📄 License
-
-This project is provided as-is for educational and personal use.
+This project is provided as-is for educational and commercial use.
 
 ---
 
-## 🙏 Acknowledgments
+## Credits
 
-- **Crawl4AI**: Excellent async web crawling framework
-- **Ollama**: Local AI model hosting
-- **DeepSeek**: Powerful reasoning model for intelligent navigation
-- **BeautifulSoup**: Reliable HTML parsing
-
----
-
-## 📞 Support
-
-For issues or questions:
-1. Check the Troubleshooting section above
-2. Verify all prerequisites are installed
-3. Ensure deepseek-r1:14b model is pulled and running
+**Technologies Used:**
+- [Crawl4AI](https://github.com/unclecode/crawl4ai) - Async web crawling
+- [Ollama](https://ollama.ai) - Local LLM inference
+- [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/) - HTML parsing
+- [DeepSeek](https://www.deepseek.com/) - AI model
 
 ---
 
-**Version**: 3.0  
-**Last Updated**: October 10, 2025  
-**Model**: deepseek-r1:14b  
-**Python**: 3.8+
+## Summary
+
+This Agentic AI Web Crawler represents a new approach to web scraping:
+
+✅ **No hardcoded patterns** - Works on any site structure
+✅ **Goal-driven** - Adapts to your specific needs
+✅ **Intelligent** - Learns and improves during crawl
+✅ **Universal** - E-commerce, blogs, docs, any content type
+✅ **Clean output** - Only relevant extracted data
+✅ **Production-ready** - Robust error handling and fallbacks
+
+**Perfect for:**
+- Dynamic data extraction projects
+- Research and data collection
+- Competitive intelligence
+- Content aggregation
+- API alternative for websites without APIs
+
+**Get started:**
+```bash
+python main.py
+```
+
+And let AI handle the complexity of web scraping! 🚀
