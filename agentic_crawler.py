@@ -9,6 +9,21 @@ This script uses:
 - AI Navigation - LLM figures out which links are relevant
 - Schema-less Extraction - LLM determines what's important to scrape
 - Two-phase crawling - Reconnaissance + Targeted Deep Dive
+- Section-based Analysis - Each page section scored independently for relevance
+- Smart Link Selection - Heuristic filtering of links based on objective keywords
+
+Key Improvements:
+- Reconnaissance phase uses intelligent link filtering (not blind first-N selection)
+- Pages analyzed section-by-section with individual relevance scores
+- Only relevant sections extracted, irrelevant sections skipped
+- Link selection considers anchor text, context, and objective keywords
+
+Performance Optimizations:
+- Parallel page crawling: Multiple pages processed concurrently
+- Async AI calls: LLM requests run in thread pool for parallelization
+- Batch processing: Queue seeding and link extraction parallelized
+- Configurable concurrency: Adjust speed vs resource usage (1-10 pages)
+- Expected speedup: 2-3x faster with default concurrency=3
 
 Requirements:
 - Ollama must be running locally with deepseek-r1:14b model
@@ -23,6 +38,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from urllib.parse import urljoin, urlparse
 from collections import defaultdict
+from functools import partial
 import ollama
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.extraction_strategy import NoExtractionStrategy
@@ -32,10 +48,11 @@ from bs4 import BeautifulSoup
 class ImprovedAgenticWebCrawler:
     """An intelligent web crawler that uses AI to make navigation decisions and extract content schema-lessly."""
     
-    def __init__(self, decision_model: str = "deepseek-r1:14b", extraction_model: str = "deepseek-r1:14b", max_pages: int = 50):
+    def __init__(self, decision_model: str = "deepseek-r1:14b", extraction_model: str = "deepseek-r1:14b", max_pages: int = 50, concurrency: int = 3):
         self.decision_model = decision_model
         self.extraction_model = extraction_model
         self.max_pages = max_pages
+        self.concurrency = concurrency  # Number of pages to process concurrently
         self.visited_urls = set()
         self.scraped_data = []
         self.base_domain = None
@@ -46,6 +63,13 @@ class ImprovedAgenticWebCrawler:
         self.page_relevance_scores = {}
         self.high_value_pages = []
         self.current_phase = "initialization"
+    
+    async def _async_ollama_generate(self, model: str, prompt: str) -> Dict:
+        """Async wrapper for ollama.generate to enable parallelization."""
+        loop = asyncio.get_event_loop()
+        # Run the blocking ollama.generate in a thread pool
+        response = await loop.run_in_executor(None, partial(ollama.generate, model=model, prompt=prompt))
+        return response
         
     async def analyze_user_objective(self, objective: str) -> Dict[str, Any]:
         print("\n🤖 Analyzing your objective with AI...")
@@ -74,7 +98,7 @@ Respond in JSON format:
 Be specific and actionable."""
 
         try:
-            response = ollama.generate(model=self.decision_model, prompt=prompt)
+            response = await self._async_ollama_generate(model=self.decision_model, prompt=prompt)
             response_text = response['response'].strip()
             if '```json' in response_text:
                 json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
@@ -123,18 +147,276 @@ Be specific and actionable."""
                     break
         return similar
     
+    def _score_link_relevance_heuristic(self, link: Dict) -> float:
+        """Score a link's relevance using heuristics during reconnaissance."""
+        score = 5.0  # Base score
+        
+        # Extract text to analyze
+        link_text = (link.get('anchor_text', '') + ' ' + link.get('context', '')).lower()
+        url_path = link.get('url_path', '').lower()
+        
+        # Penalize obvious low-value pages
+        low_value_keywords = ['privacy', 'policy', 'terms', 'cookie', 'login', 'signin', 'signup', 
+                              'register', 'cart', 'checkout', 'account', 'subscribe', 'newsletter']
+        for keyword in low_value_keywords:
+            if keyword in link_text or keyword in url_path:
+                score -= 3
+        
+        # Boost if link is in main content area
+        if link.get('is_main_content'):
+            score += 2
+        
+        # Boost if link is prominent (in headers)
+        if link.get('is_prominent'):
+            score += 1.5
+        
+        # Penalize navigation links
+        if link.get('is_navigation'):
+            score -= 1
+        
+        # Boost if objective keywords appear in link text
+        if self.crawl_objective:
+            objective_keywords = [word.lower() for word in self.crawl_objective.split() if len(word) > 3]
+            for keyword in objective_keywords:
+                if keyword in link_text:
+                    score += 2
+                if keyword in url_path:
+                    score += 1.5
+        
+        # Boost if matches desired data types
+        for data_type in self.desired_data_types:
+            if data_type.lower() in link_text or data_type.lower() in url_path:
+                score += 2
+        
+        # Check against objective analysis patterns
+        seek_patterns = self.crawl_objective_analysis.get('url_patterns_to_seek', [])
+        for pattern in seek_patterns:
+            if pattern.lower() in url_path or pattern.lower() in link_text:
+                score += 3
+        
+        return max(0, min(10, score))  # Clamp between 0-10
+    
+    def _select_best_links_for_recon(self, links: List[Dict], count: int = 8) -> List[Dict]:
+        """Intelligently select the most promising links during reconnaissance."""
+        if not links:
+            return []
+        
+        # Score all links
+        scored_links = []
+        for link in links:
+            score = self._score_link_relevance_heuristic(link)
+            scored_links.append((score, link))
+        
+        # Sort by score (highest first)
+        scored_links.sort(reverse=True, key=lambda x: x[0])
+        
+        # Take top N, but ensure diversity (don't take too many from same pattern)
+        selected = []
+        pattern_counts = defaultdict(int)
+        
+        for score, link in scored_links:
+            if len(selected) >= count:
+                break
+            
+            # Skip if score is too low (below 3)
+            if score < 3:
+                continue
+            
+            # Limit links from same URL pattern to maintain diversity
+            pattern = self._extract_url_pattern(link['url'])
+            if pattern_counts[pattern] >= 2:  # Max 2 links per pattern in recon
+                continue
+            
+            selected.append(link)
+            pattern_counts[pattern] += 1
+        
+        return selected
+    
+    def _identify_page_sections(self, soup: BeautifulSoup) -> List[Dict]:
+        """Identify distinct content sections on a page."""
+        sections = []
+        section_id = 0
+        
+        # Try semantic HTML5 sections first
+        for section_tag in soup.find_all(['section', 'article', 'main']):
+            text = section_tag.get_text(separator=' ', strip=True)
+            if len(text) < 50:  # Skip tiny sections
+                continue
+            
+            # Get section identifier
+            section_class = ' '.join(section_tag.get('class', []))
+            section_name = section_tag.get('id', section_class or f'section_{section_id}')
+            
+            # Get headers in this section
+            headers = [h.get_text(strip=True) for h in section_tag.find_all(['h1', 'h2', 'h3', 'h4']) if h.get_text(strip=True)]
+            
+            sections.append({
+                'id': section_id,
+                'name': section_name[:50],
+                'text_preview': text[:400],
+                'headers': headers[:3],
+                'tag_type': section_tag.name,
+                'word_count': len(text.split())
+            })
+            section_id += 1
+        
+        # If no semantic sections found, try divs with substantial content
+        if len(sections) < 2:
+            sections = []
+            section_id = 0
+            for div in soup.find_all('div', class_=True):
+                text = div.get_text(separator=' ', strip=True)
+                if len(text) < 100:  # Need more substantial content for divs
+                    continue
+                
+                # Skip if this div is nested inside another we already captured
+                if any(div in s.get('_element', []) for s in sections):
+                    continue
+                
+                section_class = ' '.join(div.get('class', []))
+                headers = [h.get_text(strip=True) for h in div.find_all(['h1', 'h2', 'h3', 'h4']) if h.get_text(strip=True)]
+                
+                sections.append({
+                    'id': section_id,
+                    'name': section_class[:50] or f'content_block_{section_id}',
+                    'text_preview': text[:400],
+                    'headers': headers[:3],
+                    'tag_type': 'div',
+                    'word_count': len(text.split()),
+                    '_element': div  # Keep reference for nesting check
+                })
+                section_id += 1
+                
+                if len(sections) >= 8:  # Limit to avoid too many sections
+                    break
+        
+        # Clean up internal references
+        for section in sections:
+            section.pop('_element', None)
+        
+        return sections[:8]  # Max 8 sections
+    
     async def _extract_content_with_ai(self, html: str, url: str, markdown: str = "") -> Dict[str, Any]:
         soup = BeautifulSoup(html, 'lxml')
-        for tag in soup.find_all(['nav', 'header', 'footer', 'script', 'style']):
+        
+        # Remove noise but keep main content
+        for tag in soup.find_all(['script', 'style', 'nav', 'header', 'footer']):
             tag.decompose()
+        
+        # Identify distinct sections
+        sections = self._identify_page_sections(soup)
+        
+        # If we have multiple sections, analyze them individually
+        if len(sections) >= 2:
+            return await self._extract_content_by_sections(sections, url, soup)
+        else:
+            # Fall back to whole-page analysis for simple pages
+            return await self._extract_content_whole_page(soup, url, markdown)
+    
+    async def _extract_content_by_sections(self, sections: List[Dict], url: str, soup: BeautifulSoup) -> Dict[str, Any]:
+        """Analyze and extract content section by section."""
+        
+        # Build section summary for AI
+        sections_summary = []
+        for section in sections:
+            sections_summary.append({
+                'id': section['id'],
+                'name': section['name'],
+                'headers': section['headers'],
+                'preview': section['text_preview'][:200],
+                'size': f"{section['word_count']} words"
+            })
+        
+        prompt = f"""You are analyzing a web page SECTION BY SECTION to find relevant content.
+
+USER'S OBJECTIVE: {self.crawl_objective}
+
+TARGET DATA TYPES: {', '.join(self.desired_data_types)}
+KEY FIELDS TO EXTRACT: {', '.join(self.crawl_objective_analysis.get('key_fields', []))}
+
+PAGE URL: {url}
+
+PAGE SECTIONS (analyze each independently):
+{json.dumps(sections_summary, indent=2)}
+
+YOUR TASK:
+1. Score EACH section individually (0-10) based on how well it matches the objective
+2. For high-scoring sections (7+), extract ALL relevant data in detail
+3. For medium sections (4-6), extract key points
+4. For low sections (0-3), note why they're irrelevant and skip extraction
+
+Respond in JSON:
+{{
+  "page_type": "overall page type",
+  "sections_analysis": [
+    {{
+      "section_id": 0,
+      "relevance_score": 0-10,
+      "reason": "why this section is/isn't relevant",
+      "extracted_content": {{
+        // Only include if relevance >= 4
+        // Extract based on relevance level
+      }}
+    }},
+    ...
+  ],
+  "overall_relevance_score": 0-10,
+  "content_summary": "Summary of what valuable information was found across all sections"
+}}
+
+CRITICAL: Different sections can have VERY different relevance scores. Be precise."""
+
+        try:
+            response = await self._async_ollama_generate(model=self.extraction_model, prompt=prompt)
+            response_text = response['response'].strip()
+            if '```json' in response_text:
+                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            elif '```' in response_text:
+                json_match = re.search(r'```\s*(.*?)\s*```', response_text, re.DOTALL)
+                if json_match:
+                    response_text = json_match.group(1)
+            
+            extracted = json.loads(response_text)
+            
+            # Compile extracted content from relevant sections
+            key_content = {}
+            section_scores = []
+            for section_analysis in extracted.get('sections_analysis', []):
+                section_id = section_analysis.get('section_id')
+                relevance = section_analysis.get('relevance_score', 0)
+                section_scores.append(relevance)
+                
+                if relevance >= 4 and 'extracted_content' in section_analysis:
+                    section_name = sections[section_id]['name'] if section_id < len(sections) else f'section_{section_id}'
+                    key_content[f"section_{section_id}_{section_name}"] = section_analysis['extracted_content']
+            
+            # Calculate overall relevance (max of section scores, not average)
+            overall_relevance = max(section_scores) if section_scores else 0
+            
+            result = {
+                "page_type": extracted.get('page_type', 'unknown'),
+                "relevance_score": overall_relevance,
+                "key_content": key_content,
+                "sections_analysis": extracted.get('sections_analysis', []),
+                "reasoning": f"Analyzed {len(sections)} sections. Best section scored {overall_relevance}/10.",
+                "content_summary": extracted.get('content_summary', 'No summary available')
+            }
+            
+            self._update_site_knowledge(url, result)
+            return result
+            
+        except Exception as e:
+            print(f"  ⚠ AI section extraction error: {str(e)[:100]}")
+            # Fallback to whole page
+            return await self._extract_content_whole_page(soup, url, "")
+    
+    async def _extract_content_whole_page(self, soup: BeautifulSoup, url: str, markdown: str = "") -> Dict[str, Any]:
+        """Fallback: analyze entire page as one unit (for simple pages)."""
         page_text = soup.get_text(separator='\n', strip=True)
         content_to_analyze = markdown[:4000] if markdown else page_text[:4000]
         headers = [h.get_text(strip=True) for h in soup.find_all(['h1', 'h2', 'h3']) if h.get_text(strip=True)][:15]
-        main_links = []
-        for a in soup.find_all('a', href=True)[:30]:
-            text = a.get_text(strip=True)
-            if text and len(text) > 2:
-                main_links.append(text)
         
         prompt = f"""You are an expert content analyst evaluating a web page for relevance and extracting information.
 
@@ -151,14 +433,9 @@ PAGE HEADERS:
 PAGE CONTENT (excerpt):
 {content_to_analyze}
 
-MAIN LINKS:
-{', '.join(main_links[:15])}
-
 YOUR TASK - ANALYZE CAREFULLY:
 
-1. **Understand the Objective**: Read the user's objective carefully and understand what they're really asking for
-
-2. **Evaluate Page Relevance** (0-10 scale):
+1. **Evaluate Page Relevance** (0-10 scale):
    - 9-10: Directly answers the objective with specific, detailed information
    - 7-8: Contains significant relevant information, clearly related to objective
    - 5-6: Moderately relevant, has some useful information related to objective
@@ -166,16 +443,10 @@ YOUR TASK - ANALYZE CAREFULLY:
    - 1-2: Barely related, mostly irrelevant with tiny connection
    - 0: Completely irrelevant (navigation, footer, unrelated content)
 
-3. **Extract Strategically**:
+2. **Extract Strategically**:
    - For HIGH relevance (7+): Extract EVERYTHING in detail - full text, all items, complete data
    - For MODERATE relevance (4-6): Extract key points and important details
    - For LOW relevance (1-3): Extract only the specifically relevant parts
-   - Be thorough but focused on what actually relates to the objective
-
-4. **Quality Over Quantity**: 
-   - Don't inflate relevance scores - be honest and accurate
-   - Extract complete information, but stay focused on the objective
-   - If a page is mostly navigation/footer/ads, score it low
 
 Respond in JSON format:
 {{
@@ -183,18 +454,15 @@ Respond in JSON format:
   "relevance_score": 0-10,
   "key_content": {{
     // Extract based on relevance level
-    // High relevance: comprehensive extraction
-    // Moderate: key points and details
-    // Low: only specifically relevant parts
   }},
-  "reasoning": "Clear explanation of WHY this page got this score and how it relates to the objective",
-  "content_summary": "Accurate summary of what useful information is on this page"
+  "reasoning": "Clear explanation of WHY this page got this score",
+  "content_summary": "Summary of what useful information is on this page"
 }}
 
-CRITICAL: Be accurate with relevance scores. Don't give high scores to barely related content."""
+CRITICAL: Be accurate with relevance scores."""
 
         try:
-            response = ollama.generate(model=self.extraction_model, prompt=prompt)
+            response = await self._async_ollama_generate(model=self.extraction_model, prompt=prompt)
             response_text = response['response'].strip()
             if '```json' in response_text:
                 json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
@@ -317,7 +585,7 @@ Respond with ONLY the numbers (comma-separated, e.g., "1,3,5,8").
 If no links are worth crawling, respond "NONE"."""
         
         try:
-            response = ollama.generate(model=self.decision_model, prompt=prompt)
+            response = await self._async_ollama_generate(model=self.decision_model, prompt=prompt)
             answer = response['response'].strip()
             if 'NONE' in answer.upper():
                 print("  → AI: No valuable links found")
@@ -344,7 +612,18 @@ If no links are worth crawling, respond "NONE"."""
             page_data = {"url": url, "title": result.metadata.get("title", "No title"), "description": result.metadata.get("description", ""), "timestamp": datetime.now().isoformat(), "metadata": result.metadata, "ai_extraction": ai_extraction, "relevance_score": ai_extraction.get('relevance_score', 0), "page_type": ai_extraction.get('page_type', 'unknown')}
             relevance = ai_extraction.get('relevance_score', 0)
             page_type = ai_extraction.get('page_type', 'unknown')
-            print(f"  ✓ Type: {page_type} | Relevance: {relevance}/10")
+            
+            # Show if section-based analysis was used
+            sections_analyzed = ai_extraction.get('sections_analysis', [])
+            if sections_analyzed:
+                print(f"  ✓ Type: {page_type} | Relevance: {relevance}/10 | Sections: {len(sections_analyzed)}")
+                # Show section breakdown
+                high_sections = sum(1 for s in sections_analyzed if s.get('relevance_score', 0) >= 7)
+                if high_sections > 0:
+                    print(f"  → {high_sections} high-value section(s) found")
+            else:
+                print(f"  ✓ Type: {page_type} | Relevance: {relevance}/10")
+            
             key_content = ai_extraction.get('key_content', {})
             if key_content:
                 content_types = list(key_content.keys())
@@ -353,6 +632,30 @@ If no links are worth crawling, respond "NONE"."""
         except Exception as e:
             print(f"  ✗ Error: {str(e)[:80]}")
             return None
+    
+    async def _crawl_pages_batch(self, urls: List[str], crawler: AsyncWebCrawler, batch_size: int = 3) -> List[Optional[Dict[str, Any]]]:
+        """Crawl multiple pages concurrently for better performance."""
+        tasks = []
+        for url in urls[:batch_size]:
+            if url not in self.visited_urls:
+                self.visited_urls.add(url)
+                tasks.append(self._crawl_page(url, crawler))
+        
+        if not tasks:
+            return []
+        
+        # Crawl all pages in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Filter out exceptions and None results
+        valid_results = []
+        for result in results:
+            if isinstance(result, Exception):
+                print(f"  ⚠ Batch crawl error: {str(result)[:80]}")
+            elif result is not None:
+                valid_results.append(result)
+        
+        return valid_results
     
     async def _analyze_site_structure(self) -> Dict:
         print("\n🔍 Analyzing site structure...")
@@ -396,7 +699,7 @@ Respond in JSON:
 }}"""
 
         try:
-            response = ollama.generate(model=self.decision_model, prompt=prompt)
+            response = await self._async_ollama_generate(model=self.decision_model, prompt=prompt)
             response_text = response['response'].strip()
             if '```json' in response_text:
                 json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
@@ -428,22 +731,43 @@ Respond in JSON:
         
         async with AsyncWebCrawler(verbose=False) as crawler:
             url_queue = [start_url]
+            batch_size = self.concurrency  # Use configurable concurrency
+            
             while url_queue and len(self.visited_urls) < recon_budget:
-                current_url = url_queue.pop(0)
-                if current_url in self.visited_urls:
+                # Get batch of URLs to process
+                remaining_budget = recon_budget - len(self.visited_urls)
+                current_batch_size = min(batch_size, remaining_budget, len(url_queue))
+                
+                batch_urls = []
+                for _ in range(current_batch_size):
+                    if url_queue:
+                        url = url_queue.pop(0)
+                        if url not in self.visited_urls:
+                            batch_urls.append(url)
+                
+                if not batch_urls:
                     continue
-                self.visited_urls.add(current_url)
-                page_data = await self._crawl_page(current_url, crawler)
-                if page_data:
-                    self.scraped_data.append(page_data)
-                    result = await crawler.arun(url=current_url, bypass_cache=True)
-                    if result.success:
-                        links = await self._extract_links_with_context(result.html, current_url)
-                        if links:
-                            selected = links[:8]
-                            for link in selected:
-                                if link['url'] not in self.visited_urls and link['url'] not in url_queue:
-                                    url_queue.append(link['url'])
+                
+                print(f"🔄 Processing batch of {len(batch_urls)} pages...")
+                
+                # Crawl batch in parallel
+                batch_results = await self._crawl_pages_batch(batch_urls, crawler, batch_size=len(batch_urls))
+                
+                # Process results and extract links
+                for page_data in batch_results:
+                    if page_data:
+                        self.scraped_data.append(page_data)
+                        result = await crawler.arun(url=page_data['url'], bypass_cache=True)
+                        if result.success:
+                            links = await self._extract_links_with_context(result.html, page_data['url'])
+                            if links:
+                                # Use intelligent link selection
+                                selected = self._select_best_links_for_recon(links, count=8)
+                                print(f"  → Smart filter: {len(links)} links → {len(selected)} relevant")
+                                for link in selected:
+                                    if link['url'] not in self.visited_urls and link['url'] not in url_queue:
+                                        url_queue.append(link['url'])
+                
                 print(f"  Progress: {len(self.visited_urls)}/{recon_budget} recon pages\n")
         
         site_analysis = await self._analyze_site_structure()
@@ -457,33 +781,72 @@ Respond in JSON:
         
         async with AsyncWebCrawler(verbose=False) as crawler:
             url_queue = []
-            for page in self.scraped_data:
-                if page.get('relevance_score', 0) >= 5:  # Include moderately relevant pages and above
-                    result = await crawler.arun(url=page['url'], bypass_cache=True)
+            print("🔗 Seeding deep crawl queue from high-value pages...")
+            
+            # Parallelize queue seeding - extract links from multiple pages concurrently
+            high_value_pages = [page for page in self.scraped_data if page.get('relevance_score', 0) >= 5]
+            
+            async def extract_links_from_page(page_url):
+                """Helper to extract links from a single page."""
+                try:
+                    result = await crawler.arun(url=page_url, bypass_cache=True)
                     if result.success:
-                        links = await self._extract_links_with_context(result.html, page['url'])
-                        for link in links[:7]:  # Good balance of links to follow
-                            if link['url'] not in self.visited_urls:
-                                url_queue.append(link['url'])
-            url_queue = list(dict.fromkeys(url_queue))
+                        links = await self._extract_links_with_context(result.html, page_url)
+                        selected = self._select_best_links_for_recon(links, count=7)
+                        return [link['url'] for link in selected if link['url'] not in self.visited_urls]
+                except Exception as e:
+                    print(f"  ⚠ Error extracting links from {page_url}: {str(e)[:50]}")
+                return []
+            
+            # Process pages in batches for link extraction
+            batch_size = min(self.concurrency * 2, 5)  # Slightly higher for I/O bound operations
+            for i in range(0, len(high_value_pages), batch_size):
+                batch = high_value_pages[i:i+batch_size]
+                tasks = [extract_links_from_page(page['url']) for page in batch]
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                for result in batch_results:
+                    if isinstance(result, list):
+                        url_queue.extend(result)
+            
+            url_queue = list(dict.fromkeys(url_queue))  # Remove duplicates
+            print(f"  ✓ Queue seeded with {len(url_queue)} promising links\n")
+            
+            # Deep crawl with batching (smaller batches for better AI navigation)
+            batch_size = max(2, self.concurrency // 2)  # Smaller batch for AI-guided navigation
             
             while url_queue and len(self.visited_urls) < self.max_pages:
-                current_url = url_queue.pop(0)
-                if current_url in self.visited_urls:
+                # Get batch of URLs to process
+                remaining_budget = self.max_pages - len(self.visited_urls)
+                current_batch_size = min(batch_size, remaining_budget, len(url_queue))
+                
+                batch_urls = []
+                for _ in range(current_batch_size):
+                    if url_queue:
+                        url = url_queue.pop(0)
+                        if url not in self.visited_urls:
+                            batch_urls.append(url)
+                
+                if not batch_urls:
                     continue
-                self.visited_urls.add(current_url)
-                page_data = await self._crawl_page(current_url, crawler)
-                if page_data:
-                    self.scraped_data.append(page_data)
-                    result = await crawler.arun(url=current_url, bypass_cache=True)
-                    if result.success:
-                        links = await self._extract_links_with_context(result.html, current_url)
-                        if links:
-                            selected_urls = await self._ask_ollama_for_navigation_advanced(current_url, links, page_data.get('ai_extraction', {}))
-                            print(f"  → AI selected {len(selected_urls)} links")
-                            for url in selected_urls:
-                                if url not in self.visited_urls and url not in url_queue:
-                                    url_queue.append(url)
+                
+                # Crawl batch in parallel
+                batch_results = await self._crawl_pages_batch(batch_urls, crawler, batch_size=len(batch_urls))
+                
+                # Process results and get AI navigation for each
+                for page_data in batch_results:
+                    if page_data:
+                        self.scraped_data.append(page_data)
+                        result = await crawler.arun(url=page_data['url'], bypass_cache=True)
+                        if result.success:
+                            links = await self._extract_links_with_context(result.html, page_data['url'])
+                            if links:
+                                selected_urls = await self._ask_ollama_for_navigation_advanced(page_data['url'], links, page_data.get('ai_extraction', {}))
+                                print(f"  → AI selected {len(selected_urls)} links")
+                                for url in selected_urls:
+                                    if url not in self.visited_urls and url not in url_queue:
+                                        url_queue.append(url)
+                
                 print(f"  Progress: {len(self.visited_urls)}/{self.max_pages} | Queue: {len(url_queue)} | High-value: {len(self.high_value_pages)}\n")
         
         print(f"\n{'='*80}")
@@ -562,9 +925,11 @@ CRITICAL: Your answer should be COMPREHENSIVE and DETAILED. The user wants ALL t
         print(f"📊 Processing {len(all_pages)} pages of extracted content...")
         print("⏳ This may take 1-2 minutes for comprehensive analysis...\n")
         
-        response = ollama.generate(
-            model="deepseek-r1:14b",
-            prompt=summary_prompt
+        # Use asyncio to run in executor for async compatibility
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None, 
+            partial(ollama.generate, model="deepseek-r1:14b", prompt=summary_prompt)
         )
         
         ai_summary = response['response'].strip()
@@ -661,11 +1026,20 @@ async def main():
     max_pages_input = input("🔢 Maximum pages to crawl (default: 50): ").strip()
     max_pages = int(max_pages_input) if max_pages_input.isdigit() else 50
     
+    print()
+    print("⚡ Concurrency settings:")
+    print("   Higher = Faster but more resource intensive")
+    print("   Recommended: 2-5 for most systems")
+    concurrency_input = input("🔢 Concurrent pages to process (default: 3): ").strip()
+    concurrency = int(concurrency_input) if concurrency_input.isdigit() else 3
+    concurrency = max(1, min(concurrency, 10))  # Clamp between 1-10
+    
     # Initialize crawler
     crawler = ImprovedAgenticWebCrawler(
         decision_model="deepseek-r1:14b",
         extraction_model="deepseek-r1:14b",
-        max_pages=max_pages
+        max_pages=max_pages,
+        concurrency=concurrency
     )
     
     # Set objective
