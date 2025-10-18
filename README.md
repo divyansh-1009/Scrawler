@@ -63,14 +63,49 @@ Unlike traditional web scrapers that require predefined extraction rules, this c
 
 ## 📦 Installation
 
-### Step 1: Clone or Download
+Choose your preferred installation method:
+
+### 🐳 Option 1: Docker (Recommended - Easiest Setup)
+
+**Prerequisites**: 
+- Docker and Docker Compose installed
+- 16GB+ RAM for DeepSeek R1 model
+- 20GB+ free disk space
+
+**Quick Start**:
+```bash
+# Clone the repository
+git clone <repository-url>
+cd Scrawler
+
+# Start everything with one command
+sudo docker compose up --build -d
+
+# Pull AI models (takes 5-15 minutes)
+sudo docker exec scrawler-ollama ollama pull deepseek-r1:14b
+sudo docker exec scrawler-ollama ollama pull qwen2.5:7b
+
+# Run the crawler
+sudo docker exec -it scrawler-app python agentic_crawler.py
+```
+
+**What Docker Sets Up**:
+- ✅ Isolated Python environment with all dependencies
+- ✅ Ollama server with model management  
+- ✅ Playwright browsers pre-installed
+- ✅ Persistent data volumes for output
+- ✅ No conflicts with your system
+
+### 🔧 Option 2: Native Installation
+
+**Step 1: Clone or Download**
 
 Download the project files:
 - `agentic_crawler.py` - Main crawler script with all optimizations
 - `requirements.txt` - Python dependencies
 - `web_crawler_colab.ipynb` - Google Colab version (GPU-accelerated)
 
-### Step 2: Install Python Dependencies
+**Step 2: Install Python Dependencies**
 
 ```bash
 pip install -r requirements.txt
@@ -78,10 +113,10 @@ pip install -r requirements.txt
 
 Or manually:
 ```bash
-pip install crawl4ai>=0.3.0 ollama>=0.1.0 aiohttp>=3.9.0 beautifulsoup4>=4.12.0 lxml>=4.9.0
+pip install crawl4ai>=0.3.0 ollama>=0.1.0 aiohttp>=3.9.0 beautifulsoup4>=4.12.0 lxml>=4.9.0 requests>=2.31.0
 ```
 
-### Step 3: Install Playwright Browsers
+**Step 3: Install Playwright Browsers**
 
 Crawl4AI uses Playwright for browser automation:
 
@@ -94,23 +129,59 @@ On Linux, install system dependencies:
 playwright install-deps chromium
 ```
 
-### Step 4: Verify Ollama Installation
+**Step 4: Install and Setup Ollama**
+
+Install Ollama:
+```bash
+# Linux/macOS
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Or download from https://ollama.com
+```
 
 Start Ollama server:
 ```bash
 ollama serve
 ```
 
-Verify model is installed:
+Pull required models:
+```bash
+ollama pull deepseek-r1:14b  # Primary model (8.7GB)
+ollama pull qwen2.5:7b       # Backup model (4.4GB)
+```
+
+Verify installation:
 ```bash
 ollama list
 ```
 
-You should see `deepseek-r1:14b` in the list.
+You should see both models in the list.
 
 ## 🚀 Quick Start
 
-### Basic Usage
+### 🐳 Docker Usage (Recommended)
+
+1. **Start Services**:
+   ```bash
+   sudo docker compose up --build -d
+   ```
+
+2. **Pull AI Models** (first time only):
+   ```bash
+   sudo docker exec scrawler-ollama ollama pull deepseek-r1:14b
+   ```
+
+3. **Run the Crawler**:
+   ```bash
+   sudo docker exec -it scrawler-app python agentic_crawler.py
+   ```
+
+4. **Access Output Files**:
+   - Files saved to `./output/` directory on your host machine
+   - `scraped_data.json` - Raw extracted data  
+   - `ai_answer.md` - Comprehensive AI-generated answer
+
+### 🔧 Native Usage
 
 1. **Start Ollama** (in one terminal):
    ```bash

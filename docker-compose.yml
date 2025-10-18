@@ -1,0 +1,75 @@
+services:
+  # Ollama service for LLM models
+  ollama:
+    image: ollama/ollama:latest
+    container_name: scrawler-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    # Uncomment the following lines if you have an NVIDIA GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Web crawler service
+  crawler:
+    image: divyansh288/scrawler-crawler:latest
+    container_name: scrawler-app
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./output:/app/output
+      - ./scraped_data:/app/scraped_data
+    environment:
+      - OLLAMA_HOST=ollama:11434
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    # Override the default command to keep container running for interactive use
+    command: ["tail", "-f", "/dev/null"]
+
+  # Optional: Model initialization service
+  model-init:
+    image: ollama/ollama:latest
+    container_name: scrawler-model-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: ["/bin/sh"]
+    command: 
+      - -c
+      - |
+        echo 'Pulling deepseek-r1:14b model...'
+        ollama pull deepseek-r1:14b || echo 'Failed to pull deepseek-r1:14b'
+        echo 'Pulling qwen2.5:7b model as backup...'
+        ollama pull qwen2.5:7b || echo 'Failed to pull qwen2.5:7b'
+        echo 'Model initialization completed!'
+    restart: "no"
+
+volumes:
+  ollama_data:
+    driver: local
+
+networks:
+  default:
+    name: scrawler-network
