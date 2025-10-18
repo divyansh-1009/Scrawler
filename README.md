@@ -1171,10 +1171,6 @@ For issues and questions:
 3. Check Ollama/Crawl4AI documentation
 4. GitHub issues (if applicable)
 
-## 📝 License
-
-[Specify your license here]
-
 ## 🙏 Acknowledgments
 
 Built with:
@@ -1186,9 +1182,9 @@ Built with:
 
 ---
 
-**Created by**: [Your Name]
+**Created by**: Divyansh Yadav
 **Version**: 1.0.0
-**Last Updated**: January 2025
+**Last Updated**: October 2025
 
 **Happy Crawling! 🕷️**
 
